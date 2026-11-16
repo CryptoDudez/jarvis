@@ -999,10 +999,10 @@ function vizRead(t){ // -> {lvl 0..1, bins[64] 0..1, wave[64] -1..1}
   function ticks(r,n,len,w,a,rt,skip){x.strokeStyle=`rgba(${col()},${a})`;x.lineWidth=w;x.beginPath();for(let i=0;i<n;i++){if(skip&&skip(i))continue;const g=rt+i/n*Math.PI*2;x.moveTo(C+Math.cos(g)*r,C+Math.sin(g)*r);x.lineTo(C+Math.cos(g)*(r+len),C+Math.sin(g)*(r+len))}x.stroke()}
   function frame(){
     const v=vizRead(t);L+= (v.lvl-L)*(v.lvl>L?.5:.12);for(let i=0;i<64;i++)B[i]+=(v.bins[i]-B[i])*(v.bins[i]>B[i]?.6:.15);
-    if(L-prevL>.09&&L>.25)waves.push({r:150,a:.7});prevL=L;
+    if(!still&&L-prevL>.09&&L>.25)waves.push({r:150,a:.7});prevL=L;
     const sp=1+L*4;rot[0]+=.004*sp;rot[1]-=.008*sp;rot[2]+=.006*sp;
     x.setTransform(1,0,0,1,0,0);x.clearRect(0,0,S,S);
-    const sc=1+L*.045;x.setTransform(sc,0,0,sc,C*(1-sc),C*(1-sc));
+    const sc=1+L*(still?.015:.045);x.setTransform(sc,0,0,sc,C*(1-sc),C*(1-sc));
     glow(22,.9);
     x.lineWidth=3;x.strokeStyle=`rgba(${col()},.55)`;x.beginPath();[[-1,0],[1,0],[0,-1],[0,1]].forEach(([a,b])=>{x.moveTo(C+a*352,C+b*352);x.lineTo(C+a*(402+L*14),C+b*(402+L*14))});x.stroke();
     for(let i=0;i<4;i++)arc(370,rot[0]+i*Math.PI/2+.12,rot[0]+i*Math.PI/2+Math.PI/2-.12,5,.6+L*.4);
@@ -1024,7 +1024,7 @@ function vizRead(t){ // -> {lvl 0..1, bins[64] 0..1, wave[64] -1..1}
     // core
     const R=118+L*70,g=x.createRadialGradient(C,C,0,C,C,R);g.addColorStop(0,`rgba(230,250,255,${Math.min(1,.5+L*.8)})`);g.addColorStop(.18,`rgba(${col()},${.3+L*.5})`);g.addColorStop(1,`rgba(${col()},0)`);
     x.shadowBlur=0;x.fillStyle=g;x.beginPath();x.arc(C,C,R,0,Math.PI*2);x.fill();
-    t++;if(!still)requestAnimationFrame(frame);
+    t++;requestAnimationFrame(frame);
   }
   frame();
 })();
