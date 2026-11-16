@@ -246,8 +246,21 @@ input,select{width:100%;background:#030b14;color:var(--ice);border:1px solid var
       <div style="margin-top:10px">
         <div class="rowx"><span>Sleek Auto <span class="mu">· your 50%</span></span><span class="money" id="mSleek">—</span></div>
         <div class="rowx"><span>Kitesurfing <span class="mu">· EFT</span></span><span class="money" id="mKite">R0.00</span></div>
-        <div class="rowx"><span>niche.co <span class="mu">· Shopify</span></span><span class="money mu">Phase 3</span></div>
+        <div class="rowx"><span>niche.co <span class="mu">· Shopify</span></span><span class="money" id="mShop">—</span></div>
       </div>
+    </div>
+
+    <div class="panel" id="shopP">
+      <div class="ph"><h2>niche.co · Shopify</h2><span class="chip off" id="shopChip">Not connected</span></div>
+      <div class="kv">
+        <div><div class="lbl">Today</div><div class="num" id="shToday">—</div><div class="mu" id="shTodayN"></div></div>
+        <div><div class="lbl">This month</div><div class="num" id="shMonth">—</div><div class="mu" id="shMonthN"></div></div>
+      </div>
+      <div class="bars" id="shBars" style="grid-template-columns:repeat(7,1fr);height:56px" aria-label="Sales, last 7 days"></div>
+      <div class="hrs" id="shDays" style="grid-template-columns:repeat(7,1fr)"></div>
+      <div class="lbl" style="margin-top:10px">Best sellers this month</div>
+      <div class="list" id="shTop"><div class="mu">—</div></div>
+      <div class="mu" id="shMsg" style="margin-top:8px">Needs the Shopify relay set up in Supabase, and Sleek Auto signed in.</div>
     </div>
 
     <div class="panel">
@@ -414,6 +427,7 @@ async function handle(raw){
   if(/e-?mail|inbox|\bmail\b|pay|bill|invoice/.test(t))return say(await mailSpeech(true));
   if(/wind|weather|kite|rain|temperature|hot|cold/.test(t))return say(wxSpeech());
   if(/easy lover|music|song|play/.test(t)){say("Playing Easy Lover.");return openSong()}
+  if(/niche|shopify|store|shop|orders?\b|sales|best ?sell/.test(t))return say(shopSpeech());
   if(/money|income|made|earn|revenue|profit/.test(t))return say(incomeSpeech());
   if(/today|tomorrow|this week|what'?s on|busy|free|schedule|wash|booking|on for|monday|tuesday|wednesday|thursday|friday|saturday|sunday/.test(t)){const w=todaySpeech(t);if(w)await say(w);return say(await calSpeech(t))}
   if(/\btime\b/.test(t))return say("It's "+new Date().toLocaleTimeString("en-ZA",{hour:"2-digit",minute:"2-digit",timeZone:TZ})+".");
@@ -467,7 +481,7 @@ async function saEnter(uid){
   saOn=true;$("#saChip").textContent="Live";$("#saChip").className="chip live";$("#bookChip").textContent="Ready";$("#bookChip").className="chip live";
   $("#saBox").innerHTML=`<div class="mu">Connected as ${esc(p.name)}. Jarvis reads and books washes live.</div><button class="ghost" style="margin-top:10px" id="saOut">Disconnect</button>`;
   $("#saOut").onclick=async()=>{await sb.auth.signOut();location.reload()};
-  await saLoad();
+  await saLoad();shopLoad();
   sb.channel("jarvis").on("postgres_changes",{event:"*",schema:"public",table:"washes"},saLoad).on("postgres_changes",{event:"*",schema:"public",table:"bonuses"},saLoad).subscribe();
 }
 async function saLoad(){
@@ -496,16 +510,47 @@ $("#bookF").onsubmit=async e=>{e.preventDefault();
 let kite=store.get("kite",[]);
 function sleekShare(prefix){const ms=washes.filter(w=>w.done&&(w.date||"").startsWith(prefix)),rev=ms.reduce((s,w)=>s+(+w.price||0),0),bn=bons.filter(b=>(b.bonus_date||"").startsWith(prefix)).reduce((s,b)=>s+ +b.amount,0);return{rev,mine:rev*.5-bn,n:ms.length}}
 function kiteSum(prefix){return kite.filter(k=>k.d.startsWith(prefix)).reduce((s,k)=>s+ +k.a,0)}
+/* ===== niche.co Shopify (via the Supabase relay) ===== */
+let shop=null,shopErr="";
+async function shopLoad(){
+  if(!saOn||!sb)return;
+  try{const{data,error}=await sb.functions.invoke("shopify-stats",{body:{}});
+    if(error){let m=error.message||"";try{const b=await error.context.json();if(b&&b.error)m=b.error}catch(e){}throw new Error(/not found|404|Failed to send/i.test(m)?"The Shopify relay isn't set up in Supabase yet.":m)}
+    if(data&&data.error)throw new Error(data.error);shop=data;shopErr="";store.set("shop",shop)}
+  catch(e){shopErr=e.message;if(!shop)shop=store.get("shop",null)}
+  renderShop();renderIncome();
+}
+function renderShop(){
+  const c=$("#shopChip");
+  if(!shop){c.textContent=saOn?"Setup needed":"Sign in to Sleek Auto";c.className="chip "+(saOn?"wait":"off");$("#shMsg").textContent=shopErr||"Needs the Shopify relay set up in Supabase, and Sleek Auto signed in.";return}
+  c.textContent=shopErr?"Cached":"Live";c.className="chip "+(shopErr?"wait":"live");
+  $("#shToday").textContent=R(shop.today.sales);$("#shTodayN").textContent=shop.today.orders+" order"+(shop.today.orders===1?"":"s");
+  $("#shMonth").textContent=R(shop.month.sales);$("#shMonthN").textContent=shop.month.orders+" order"+(shop.month.orders===1?"":"s");
+  const mx=Math.max(1,...shop.days.map(d=>d.sales));
+  $("#shBars").innerHTML=shop.days.map(d=>`<i class="${d.day===ld()?"k":""}" style="height:${Math.max(3,d.sales/mx*100)}%" title="${esc(d.day)} · ${R(d.sales)} · ${d.orders} orders"></i>`).join("");
+  $("#shDays").innerHTML=shop.days.map(d=>`<span>${esc(new Date(d.day+"T12:00:00+02:00").toLocaleDateString("en-ZA",{weekday:"short",timeZone:TZ}))}</span>`).join("");
+  $("#shTop").innerHTML=shop.top.map(t=>`<div class="rowx"><span>${esc(t.title)}</span><span class="money">${t.qty} sold</span></div>`).join("")||'<div class="mu">No sales yet this month.</div>';
+  $("#shMsg").textContent=(shopErr?shopErr+" Showing the last numbers I had. ":"")+"Updated "+new Date(shop.updated).toLocaleTimeString("en-ZA",{hour:"2-digit",minute:"2-digit",timeZone:TZ})+". Sales are order totals, before costs.";
+}
+function shopSpeech(){
+  if(!saOn)return "Sign in to Sleek Auto in Jarvis and I'll check niche.co.";
+  if(!shop)return shopErr||"The Shopify relay isn't set up yet.";
+  const top=shop.top[0];
+  return "niche.co has done "+R(shop.today.sales)+" today from "+shop.today.orders+" order"+(shop.today.orders===1?"":"s")+", and "+R(shop.month.sales)+" this month from "+shop.month.orders+" orders."+(top?" Best seller this month is "+top.title+", "+top.qty+" sold.":"");
+}
+setInterval(()=>{if(saOn)shopLoad()},10*6e4);
+
 function renderIncome(){
   const td=ld(),mo=td.slice(0,7);const sd=saOn?sleekShare(td).mine:0,sm=saOn?sleekShare(mo):null;
   $("#mSleek").textContent=saOn?R2(sm.mine):"Sign in";$("#mKite").textContent=R2(kiteSum(mo));
-  $("#incDay").textContent=R(sd+kiteSum(td));$("#incMon").textContent=R((sm?sm.mine:0)+kiteSum(mo));
+  const shD=shop?shop.today.sales:0,shM=shop?shop.month.sales:0;$("#mShop").textContent=shop?R2(shM):"—";
+  $("#incDay").textContent=R(sd+kiteSum(td)+shD);$("#incMon").textContent=R((sm?sm.mine:0)+kiteSum(mo)+shM);
   $("#incChip").textContent=new Date().toLocaleDateString("en-ZA",{month:"long",timeZone:TZ});
   $("#kList").innerHTML=kite.filter(k=>k.d.startsWith(mo)).sort((a,b)=>b.d.localeCompare(a.d)).slice(0,6).map((k,i)=>`<div class="rowx"><span>${esc(k.n||"Kite payment")} <span class="mu">· ${esc(k.d)}</span></span><span class="money">${R2(k.a)} <button class="ghost" style="min-height:26px;padding:4px 7px;font-size:9px;margin-left:6px" data-del="${k.id}" aria-label="Remove payment">✕</button></span></div>`).join("");
   document.querySelectorAll("[data-del]").forEach(b=>b.onclick=()=>{kite=kite.filter(k=>k.id!==b.dataset.del);store.set("kite",kite);renderIncome()});
 }
 $("#kF").onsubmit=e=>{e.preventDefault();const a=+$("#kA").value;if(!(a>0))return toast("Enter an amount.");kite.push({id:Date.now().toString(36),a,d:$("#kD").value||ld(),n:$("#kN").value.trim()});store.set("kite",kite);$("#kA").value="";$("#kN").value="";renderIncome();toast("Kite payment logged.")};
-function incomeSpeech(){const mo=ld().slice(0,7),k=kiteSum(mo);if(!saOn)return "Kitesurfing has brought in "+R(k)+" this month. Connect Sleek Auto and I'll add the washes.";const s=sleekShare(mo);return "This month: Sleek Auto did "+R(s.rev)+" from "+s.n+" washes, your share is "+R(s.mine)+". Kitesurfing adds "+R(k)+". Total "+R(s.mine+k)+"."}
+function incomeSpeech(){const mo=ld().slice(0,7),k=kiteSum(mo);if(!saOn)return "Kitesurfing has brought in "+R(k)+" this month. Connect Sleek Auto and I'll add the washes.";const s=sleekShare(mo),sh=shop?shop.month.sales:0;return "This month: Sleek Auto did "+R(s.rev)+" from "+s.n+" washes, your share is "+R(s.mine)+". Kitesurfing adds "+R(k)+"."+(shop?" niche.co sales are "+R(sh)+".":"")+" Total "+R(s.mine+k+sh)+"."}
 function todaySpeech(q){if(!saOn)return "";const r=askRange(q||""),day=r.next?ld():r.from,lbl=r.next?"today":r.label;
   if(r.days>1){const n=washes.filter(w=>!w.done&&inRange({day:w.date},r)).length;return n?"Sleek Auto has "+n+" wash"+(n>1?"es":"")+" booked "+lbl+".":"No washes booked "+lbl+"."}
   const l=washes.filter(w=>w.date===day&&!w.done).sort((x,y)=>(x.time||"").localeCompare(y.time||""));return l.length?"You have "+l.length+" wash"+(l.length>1?"es ":" ")+lbl+". "+l.map(w=>w.time+", "+(w.client||"a client")+" at "+w.address).join(". ")+".":"No washes booked "+lbl+"."}
@@ -539,6 +584,7 @@ async function briefing(){
   const line=WAKE[Math.floor(Math.random()*WAKE.length)];
   await gFresh();await say(line);await say(wxSpeech());{const w=todaySpeech();if(w)await say(w)}
   await say(await calSpeech());await say(await mailSpeech(false));
+  if(shop&&!shopErr)await say("niche.co did "+R(shop.yesterday.sales)+" yesterday from "+shop.yesterday.orders+" order"+(shop.yesterday.orders===1?"":"s")+".");
 }
 $("#morningBtn").onclick=briefing;
 /* ===== laptop alarm ===== */
@@ -601,7 +647,8 @@ $("#codeF").onsubmit=async e=>{e.preventDefault();if($("#codeI").value.trim()!==
   stopRing();armed=false;updArm();$("#wake").hidden=true;try{document.fullscreenElement&&document.exitFullscreen()}catch(e){}
   const fresh=gFresh(); // the code entry counts as a click, so Google can refresh its sign-in here
   await say($("#wakeP").textContent);await say(wxSpeech());{const w=todaySpeech();if(w)await say(w)}await fresh;
-  await say(await calSpeech());await say(await mailSpeech(false));await say("Let's get it, Hayden.");if(hf.on)hfResume()};
+  await say(await calSpeech());await say(await mailSpeech(false));
+  if(shop&&!shopErr)await say("niche.co did "+R(shop.yesterday.sales)+" yesterday from "+shop.yesterday.orders+" order"+(shop.yesterday.orders===1?"":"s")+".");await say("Let's get it, Hayden.");if(hf.on)hfResume()};
 function checkAlarm(){
   if(!armed||ringing)return;const d=nowMin()-alarmAt();
   if(d>=0&&d<120&&store.get("fired","")!==ld()){store.set("fired",ld());ring(false)}
