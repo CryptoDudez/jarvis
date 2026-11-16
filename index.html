@@ -287,11 +287,18 @@ input,select{width:100%;background:#030b14;color:var(--ice);border:1px solid var
     </div>
 
     <div class="panel">
-      <div class="ph"><h2>niche.co · Social</h2><span class="chip wait">Phase 4</span></div>
+      <div class="ph"><h2>niche.co · Social</h2><span class="chip wait" id="soChip">Loading</span></div>
       <div class="kv">
-        <div><div class="lbl">TikTok</div><div class="num sm">—</div><div class="mu">followers · views</div></div>
-        <div><div class="lbl">Instagram</div><div class="num sm">—</div><div class="mu">followers · reach</div></div>
+        <div><div class="lbl">TikTok · <span id="ttH">@niche.co</span></div><div class="num" id="ttF">—</div><div class="mu">followers <span id="ttFd"></span></div></div>
+        <div><div class="lbl">Instagram · <span id="igH">@nicheco.offcial</span></div><div class="num" id="igF">—</div><div class="mu">followers <span id="igFd"></span></div></div>
       </div>
+      <div style="margin-top:8px">
+        <div class="rowx"><span>TikTok likes <span class="mu">· 7 days</span></span><span class="money" id="ttL">—</span></div>
+        <div class="rowx"><span>TikTok views <span class="mu">· 7 days</span></span><span class="money" id="ttV">—</span></div>
+        <div class="rowx"><span>Instagram views <span class="mu">· 7 days</span></span><span class="money" id="igV">—</span></div>
+        <div class="rowx"><span>Instagram reach <span class="mu">· 7 days</span></span><span class="money" id="igR">—</span></div>
+      </div>
+      <div class="mu" id="soMsg" style="margin-top:6px"></div>
     </div>
 
     <div class="panel">
@@ -427,6 +434,7 @@ async function handle(raw){
   if(/e-?mail|inbox|\bmail\b|pay|bill|invoice/.test(t))return say(await mailSpeech(true));
   if(/wind|weather|kite|rain|temperature|hot|cold/.test(t))return say(wxSpeech());
   if(/easy lover|music|song|play/.test(t)){say("Playing Easy Lover.");return openSong()}
+  if(/tik ?tok|instagram|insta\b|\big\b|social|followers|views|reach/.test(t))return say(socialSpeech(/tik ?tok/.test(t)?"tiktok":/instagram|insta\b|\big\b/.test(t)?"instagram":""));
   if(/niche|shopify|store|shop|orders?\b|sales|best ?sell/.test(t))return say(shopSpeech());
   if(/money|income|made|earn|revenue|profit/.test(t))return say(incomeSpeech());
   if(/today|tomorrow|this week|what'?s on|busy|free|schedule|wash|booking|on for|monday|tuesday|wednesday|thursday|friday|saturday|sunday/.test(t)){const w=todaySpeech(t);if(w)await say(w);return say(await calSpeech(t))}
@@ -510,6 +518,35 @@ $("#bookF").onsubmit=async e=>{e.preventDefault();
 let kite=store.get("kite",[]);
 function sleekShare(prefix){const ms=washes.filter(w=>w.done&&(w.date||"").startsWith(prefix)),rev=ms.reduce((s,w)=>s+(+w.price||0),0),bn=bons.filter(b=>(b.bonus_date||"").startsWith(prefix)).reduce((s,b)=>s+ +b.amount,0);return{rev,mine:rev*.5-bn,n:ms.length}}
 function kiteSum(prefix){return kite.filter(k=>k.d.startsWith(prefix)).reduce((s,k)=>s+ +k.a,0)}
+/* ===== niche.co social stats (social.json, refreshed every morning from Metricool) ===== */
+let social=null;
+const fmtN=n=>n==null?"—":Math.round(n).toLocaleString("en-ZA");
+function delta(cur,prev,key){if(!prev||prev[key]==null||cur[key]==null)return"";const d=cur[key]-prev[key];if(!d)return'<span class="mu">· same as last week</span>';const up=d>0;return`<span style="color:var(--${up?"ok":"bad"})">${up?"▲":"▼"} ${fmtN(Math.abs(d))} vs last week</span>`}
+async function socialLoad(){
+  try{const r=await fetch("social.json?t="+Date.now(),{cache:"no-store"});if(!r.ok)throw 0;social=await r.json();renderSocial()}
+  catch(e){$("#soChip").textContent="No data yet";$("#soChip").className="chip off";$("#soMsg").textContent="The daily stats update hasn't run yet."}
+}
+function renderSocial(){
+  const t=social.tiktok||{},g=social.instagram||{};
+  $("#ttH").textContent="@"+(t.handle||"niche.co");$("#igH").textContent="@"+(g.handle||"");
+  $("#ttF").textContent=fmtN(t.followers);$("#igF").textContent=fmtN(g.followers);
+  $("#ttFd").innerHTML=(t.newFollowers?`<span style="color:var(--${t.newFollowers>0?"ok":"bad"})">${t.newFollowers>0?"+":""}${fmtN(t.newFollowers)} this week</span>`:"");
+  $("#igFd").innerHTML=(g.newFollowers?`<span style="color:var(--ok)">+${fmtN(g.newFollowers)} this week</span>`:"");
+  $("#ttL").innerHTML=(t.likesGained!=null?"+"+fmtN(t.likesGained):"—")+" "+delta({x:t.likesGained},t.prev&&{x:t.prev.likesGained},"x");
+  $("#ttV").innerHTML=fmtN(t.views)+" "+delta(t,t.prev,"views");$("#igV").innerHTML=fmtN(g.views)+" "+delta(g,g.prev,"views");$("#igR").innerHTML=fmtN(g.reach)+" "+delta(g,g.prev,"reach");
+  const age=(Date.now()-new Date(social.updated))/36e5;
+  $("#soChip").textContent=age<30?"Updated daily":"Out of date";$("#soChip").className="chip "+(age<30?"live":"wait");
+  $("#soMsg").textContent="Last 7 days ("+social.from+" to "+social.to+") · from Metricool · updated "+new Date(social.updated).toLocaleString("en-ZA",{weekday:"short",hour:"2-digit",minute:"2-digit",timeZone:TZ})+(!t.prev&&!g.prev?" · week-on-week comparison starts once there are two weeks of data":"");
+}
+function socialSpeech(which){
+  if(!social)return "I don't have social stats yet. The daily update runs every morning.";
+  const t=social.tiktok||{},g=social.instagram||{},cmp=(c,p,k,w)=>p&&p[k]!=null&&c[k]!=null?(c[k]>=p[k]?", up from ":", down from ")+fmtN(p[k])+" "+w:"";
+  const tt="TikTok has "+fmtN(t.followers)+" followers"+(t.newFollowers?", "+(t.newFollowers>0?"up ":"down ")+fmtN(Math.abs(t.newFollowers))+" this week":"")+(t.likesGained!=null?", and "+fmtN(t.likesGained)+" new likes":"")+(t.views!=null?", "+fmtN(t.views)+" views"+cmp(t,t.prev,"views","last week"):"")+".";
+  const ig="Instagram has "+fmtN(g.followers)+" follower"+(g.followers===1?"":"s")+(g.newFollowers?", plus "+fmtN(g.newFollowers)+" this week":"")+(g.views!=null?", "+fmtN(g.views)+" views and "+fmtN(g.reach)+" accounts reached in the last 7 days"+cmp(g,g.prev,"views","last week"):"")+".";
+  return which==="tiktok"?tt:which==="instagram"?ig:tt+" "+ig;
+}
+socialLoad();setInterval(socialLoad,60*6e4);
+
 /* ===== niche.co Shopify (via the Supabase relay) ===== */
 let shop=null,shopErr="";
 async function shopLoad(){
@@ -584,7 +621,7 @@ async function briefing(){
   const line=WAKE[Math.floor(Math.random()*WAKE.length)];
   await gFresh();await say(line);await say(wxSpeech());{const w=todaySpeech();if(w)await say(w)}
   await say(await calSpeech());await say(await mailSpeech(false));
-  if(shop&&!shopErr)await say("niche.co did "+R(shop.yesterday.sales)+" yesterday from "+shop.yesterday.orders+" order"+(shop.yesterday.orders===1?"":"s")+".");
+  if(shop&&!shopErr)await say("niche.co did "+R(shop.yesterday.sales)+" yesterday from "+shop.yesterday.orders+" order"+(shop.yesterday.orders===1?"":"s")+".");if(social)await say(socialSpeech("tiktok"));
 }
 $("#morningBtn").onclick=briefing;
 /* ===== laptop alarm ===== */
@@ -648,7 +685,7 @@ $("#codeF").onsubmit=async e=>{e.preventDefault();if($("#codeI").value.trim()!==
   const fresh=gFresh(); // the code entry counts as a click, so Google can refresh its sign-in here
   await say($("#wakeP").textContent);await say(wxSpeech());{const w=todaySpeech();if(w)await say(w)}await fresh;
   await say(await calSpeech());await say(await mailSpeech(false));
-  if(shop&&!shopErr)await say("niche.co did "+R(shop.yesterday.sales)+" yesterday from "+shop.yesterday.orders+" order"+(shop.yesterday.orders===1?"":"s")+".");await say("Let's get it, Hayden.");if(hf.on)hfResume()};
+  if(shop&&!shopErr)await say("niche.co did "+R(shop.yesterday.sales)+" yesterday from "+shop.yesterday.orders+" order"+(shop.yesterday.orders===1?"":"s")+".");if(social)await say(socialSpeech("tiktok"));await say("Let's get it, Hayden.");if(hf.on)hfResume()};
 function checkAlarm(){
   if(!armed||ringing)return;const d=nowMin()-alarmAt();
   if(d>=0&&d<120&&store.get("fired","")!==ld()){store.set("fired",ld());ring(false)}
