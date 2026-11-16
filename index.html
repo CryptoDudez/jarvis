@@ -121,6 +121,7 @@ input,select{width:100%;background:#030b14;color:var(--ice);border:1px solid var
       <div class="lbl" style="margin-top:16px">ElevenLabs voice</div>
       <form id="elF" style="display:flex;gap:8px" autocomplete="off"><input id="elKey" type="password" placeholder="Paste your ElevenLabs API key" aria-label="ElevenLabs API key" autocomplete="off"><button type="submit">Save</button></form>
       <div style="display:flex;gap:8px;margin-top:8px"><select id="elVoice" aria-label="ElevenLabs voice"></select><button class="ghost" id="vTest" type="button">Test</button></div>
+      <form id="elIdF" style="display:flex;gap:8px;margin-top:8px" autocomplete="off"><input id="elId" placeholder="Or paste a voice ID" aria-label="ElevenLabs voice ID"><button class="ghost" type="submit">Use</button></form>
       <div class="mu" style="margin-top:8px" id="elMsg">No key saved. Jarvis uses the built-in browser voice for now.</div>
 
       <details style="margin-top:12px"><summary class="lbl" style="cursor:pointer">Backup voice (used if ElevenLabs is off or out of credits)</summary>
@@ -308,8 +309,9 @@ $("#vSel").onchange=()=>{voice=speechSynthesis.getVoices().find(v=>v.name===$("#
 $("#vRate").value=vRate;$("#vRate").onchange=()=>{vRate=+$("#vRate").value;store.set("vrate",vRate)};
 let sayId=0;
 /* ElevenLabs: key lives only in this browser (never in the code on GitHub) */
-const EL={key:store.get("elKey",""),voice:store.get("elVoice","onwK4e9ZLuTAKqWW03F9"),model:"eleven_flash_v2_5",off:false};
-const EL_DEFAULTS=[["onwK4e9ZLuTAKqWW03F9","Daniel · British, calm (Jarvis pick)"],["JBFqnCBsd6RMkjVDRZzb","George · British, warm"],["nPczCjzI2devNBz1zQrb","Brian · deep, American"],["pNInz6obpgDQGcFmaJgB","Adam · deep, American"]];
+if(!store.get("voiceV4",false)){store.set("elVoice","j45mXgB0BR0mIJbdyK09");store.set("voiceV4",true)} // Hayden's chosen voice
+const EL={key:store.get("elKey",""),voice:store.get("elVoice","j45mXgB0BR0mIJbdyK09"),model:"eleven_flash_v2_5",off:false};
+const EL_DEFAULTS=[["j45mXgB0BR0mIJbdyK09","Hayden's pick"],["onwK4e9ZLuTAKqWW03F9","Daniel · British, calm"],["JBFqnCBsd6RMkjVDRZzb","George · British, warm"],["nPczCjzI2devNBz1zQrb","Brian · deep, American"],["pNInz6obpgDQGcFmaJgB","Adam · deep, American"]];
 const talkA=new Audio();
 function elVoices(list){$("#elVoice").innerHTML=list.map(([id,n])=>`<option value="${esc(id)}" ${id===EL.voice?"selected":""}>${esc(n)}</option>`).join("");if(!list.some(([id])=>id===EL.voice))$("#elVoice").insertAdjacentHTML("afterbegin",`<option value="${esc(EL.voice)}" selected>Saved voice</option>`)}
 function elMsg(t,c){$("#elMsg").innerHTML=(c?`<span style="color:var(--${c})">●</span> `:"")+t}
@@ -321,12 +323,13 @@ async function elSetup(){
 }
 $("#elF").onsubmit=e=>{e.preventDefault();const k=$("#elKey").value.trim();if(!k)return;EL.key=k;EL.off=false;store.set("elKey",k);$("#elKey").value="";elSetup();say("ElevenLabs voice connected. How do I sound, Hayden?")};
 $("#elVoice").onchange=()=>{EL.voice=$("#elVoice").value;store.set("elVoice",EL.voice);say("This is my new voice, Hayden.")};
+$("#elIdF").onsubmit=e=>{e.preventDefault();const v=$("#elId").value.trim();if(!/^[A-Za-z0-9]{15,40}$/.test(v)){toast("That doesn't look like a voice ID.");return}EL.voice=v;store.set("elVoice",v);$("#elId").value="";elSetup();say("Voice changed, Hayden.")};
 $("#vTest").onclick=()=>say("Good morning, Hayden. Wind is pumping at twenty two knots. Shall I book your first wash?");
 const ttsCache=new Map();
 async function elAudio(text){
   const k=EL.voice+"|"+text;if(ttsCache.has(k))return ttsCache.get(k);
   const r=await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(EL.voice)}?output_format=mp3_44100_128`,{method:"POST",headers:{"xi-api-key":EL.key,"Content-Type":"application/json"},body:JSON.stringify({text,model_id:EL.model,voice_settings:{stability:.5,similarity_boost:.8}})});
-  if(!r.ok){const err=r.status===401?"ElevenLabs rejected the key. Paste it again.":r.status===429||r.status===402?"ElevenLabs is out of credits or busy. Using the backup voice.":"ElevenLabs error "+r.status+". Using the backup voice.";throw new Error(err)}
+  if(!r.ok){const err=r.status===401?"ElevenLabs rejected the key. Paste it again.":r.status===429||r.status===402?"ElevenLabs is out of credits or busy. Using the backup voice.":(r.status===400||r.status===404?"ElevenLabs can't use that voice. Add it to My Voices in ElevenLabs, or pick another one.":"ElevenLabs error "+r.status+". Using the backup voice.");throw new Error(err)}
   const u=URL.createObjectURL(await r.blob());if(text.length<120)ttsCache.set(k,u);return u;
 }
 function say(text){
