@@ -114,15 +114,19 @@ input,select{width:100%;background:#030b14;color:var(--ice);border:1px solid var
     </div>
 
     <div class="panel" id="pSet">
-      <div class="ph"><h2>Voice · Hands-free</h2><span class="chip off" id="hfChip">Mic off</span></div>
-      <div class="lbl">Jarvis voice</div>
-      <div style="display:flex;gap:8px"><select id="vSel" aria-label="Jarvis voice"></select><button class="ghost" id="vTest" type="button">Test</button></div>
-      <div class="kv" style="margin-top:10px">
-        <div><div class="lbl">Speed</div><input id="vRate" type="range" min="0.8" max="1.25" step="0.05" value="1" aria-label="Voice speed"></div>
-        <div><div class="lbl">Clap sensitivity</div><input id="hfSens" type="range" min="1" max="10" step="1" value="5" aria-label="Clap sensitivity"></div>
-      </div>
-      <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap"><button id="hfBtn" type="button">Switch on clap wake</button></div>
-      <div class="mu" style="margin-top:10px" id="hfMsg">Clap twice, then say "Hey Jarvis". Keep the Jarvis window open on screen.</div>
+      <div class="ph"><h2>Voice · Hey Jarvis</h2><span class="chip off" id="hfChip">Not listening</span></div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap"><button id="hfBtn" type="button">Always listen for "Hey Jarvis"</button></div>
+      <div class="mu" style="margin-top:8px" id="hfMsg">Say "Hey Jarvis", wait for the reply, then say what you need. Or say it in one go: "Hey Jarvis, what's the wind?"</div>
+
+      <div class="lbl" style="margin-top:16px">ElevenLabs voice</div>
+      <form id="elF" style="display:flex;gap:8px" autocomplete="off"><input id="elKey" type="password" placeholder="Paste your ElevenLabs API key" aria-label="ElevenLabs API key" autocomplete="off"><button type="submit">Save</button></form>
+      <div style="display:flex;gap:8px;margin-top:8px"><select id="elVoice" aria-label="ElevenLabs voice"></select><button class="ghost" id="vTest" type="button">Test</button></div>
+      <div class="mu" style="margin-top:8px" id="elMsg">No key saved. Jarvis uses the built-in browser voice for now.</div>
+
+      <details style="margin-top:12px"><summary class="lbl" style="cursor:pointer">Backup voice (used if ElevenLabs is off or out of credits)</summary>
+        <div style="margin-top:8px"><select id="vSel" aria-label="Backup voice"></select></div>
+        <div style="margin-top:8px"><div class="lbl">Speed</div><input id="vRate" type="range" min="0.8" max="1.25" step="0.05" value="1" aria-label="Backup voice speed"></div>
+      </details>
     </div>
 
     <div class="panel">
@@ -300,14 +304,43 @@ function pickVoice(){
   $("#vSel").innerHTML=all.map(v=>`<option value="${esc(v.name)}" ${v===voice?"selected":""}>${/natural|neural/i.test(v.name)?"★ ":""}${esc(v.name.replace(/^Microsoft /,"").replace(/ - English.*$/,""))} · ${esc(v.lang)}</option>`).join("");
 }
 if("speechSynthesis" in window){pickVoice();speechSynthesis.onvoiceschanged=pickVoice}
-$("#vSel").onchange=()=>{voice=speechSynthesis.getVoices().find(v=>v.name===$("#vSel").value)||voice;store.set("voice",voice&&voice.name);say("Hello Hayden. This is how I sound now.")};
+$("#vSel").onchange=()=>{voice=speechSynthesis.getVoices().find(v=>v.name===$("#vSel").value)||voice;store.set("voice",voice&&voice.name);sayLocal("Hello Hayden. This is my backup voice.",++sayId)};
 $("#vRate").value=vRate;$("#vRate").onchange=()=>{vRate=+$("#vRate").value;store.set("vrate",vRate)};
-$("#vTest").onclick=()=>say("Good morning, Hayden. Wind is pumping at twenty two knots. Shall I book your first wash?");
 let sayId=0;
-function say(text){ // speaks sentence by sentence: sounds smoother and avoids Chrome cutting off long speech
-  $("#say").textContent=text;
-  if(!("speechSynthesis" in window))return Promise.resolve();
-  const id=++sayId;speechSynthesis.cancel();
+/* ElevenLabs: key lives only in this browser (never in the code on GitHub) */
+const EL={key:store.get("elKey",""),voice:store.get("elVoice","onwK4e9ZLuTAKqWW03F9"),model:"eleven_flash_v2_5",off:false};
+const EL_DEFAULTS=[["onwK4e9ZLuTAKqWW03F9","Daniel · British, calm (Jarvis pick)"],["JBFqnCBsd6RMkjVDRZzb","George · British, warm"],["nPczCjzI2devNBz1zQrb","Brian · deep, American"],["pNInz6obpgDQGcFmaJgB","Adam · deep, American"]];
+const talkA=new Audio();
+function elVoices(list){$("#elVoice").innerHTML=list.map(([id,n])=>`<option value="${esc(id)}" ${id===EL.voice?"selected":""}>${esc(n)}</option>`).join("");if(!list.some(([id])=>id===EL.voice))$("#elVoice").insertAdjacentHTML("afterbegin",`<option value="${esc(EL.voice)}" selected>Saved voice</option>`)}
+function elMsg(t,c){$("#elMsg").innerHTML=(c?`<span style="color:var(--${c})">●</span> `:"")+t}
+async function elSetup(){
+  elVoices(EL_DEFAULTS);if(!EL.key){elMsg("No key saved. Jarvis uses the built-in browser voice for now.");return}
+  elMsg("Key saved. ElevenLabs voice is on.","ok");$("#elKey").placeholder="Key saved · paste a new one to replace";
+  try{const r=await fetch("https://api.elevenlabs.io/v1/voices",{headers:{"xi-api-key":EL.key}});if(r.ok){const j=await r.json();const l=(j.voices||[]).map(v=>[v.voice_id,v.name+(v.labels&&v.labels.accent?" · "+v.labels.accent:"")]);if(l.length)elVoices(l)}}catch(e){}
+  try{const r=await fetch("https://api.elevenlabs.io/v1/user/subscription",{headers:{"xi-api-key":EL.key}});if(r.ok){const j=await r.json();elMsg("ElevenLabs voice is on · "+Math.max(0,j.character_limit-j.character_count).toLocaleString()+" credits left this month","ok")}}catch(e){}
+}
+$("#elF").onsubmit=e=>{e.preventDefault();const k=$("#elKey").value.trim();if(!k)return;EL.key=k;EL.off=false;store.set("elKey",k);$("#elKey").value="";elSetup();say("ElevenLabs voice connected. How do I sound, Hayden?")};
+$("#elVoice").onchange=()=>{EL.voice=$("#elVoice").value;store.set("elVoice",EL.voice);say("This is my new voice, Hayden.")};
+$("#vTest").onclick=()=>say("Good morning, Hayden. Wind is pumping at twenty two knots. Shall I book your first wash?");
+const ttsCache=new Map();
+async function elAudio(text){
+  const k=EL.voice+"|"+text;if(ttsCache.has(k))return ttsCache.get(k);
+  const r=await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(EL.voice)}?output_format=mp3_44100_128`,{method:"POST",headers:{"xi-api-key":EL.key,"Content-Type":"application/json"},body:JSON.stringify({text,model_id:EL.model,voice_settings:{stability:.5,similarity_boost:.8}})});
+  if(!r.ok){const err=r.status===401?"ElevenLabs rejected the key. Paste it again.":r.status===429||r.status===402?"ElevenLabs is out of credits or busy. Using the backup voice.":"ElevenLabs error "+r.status+". Using the backup voice.";throw new Error(err)}
+  const u=URL.createObjectURL(await r.blob());if(text.length<120)ttsCache.set(k,u);return u;
+}
+function say(text){
+  $("#say").textContent=text;const id=++sayId;
+  try{talkA.pause()}catch(e){}if("speechSynthesis" in window)speechSynthesis.cancel();
+  if(EL.key&&!EL.off){
+    setMode("thinking");
+    return elAudio(text).then(u=>new Promise(res=>{if(id!==sayId)return res();talkA.src=u;talkA.onplay=()=>setMode("speaking");talkA.onended=talkA.onerror=talkA.onpause=()=>{if(id===sayId)setMode("idle");res()};talkA.play().catch(()=>{setMode("idle");res()})}))
+      .catch(e=>{elMsg(e.message,"bad");if(/credits|key/.test(e.message))EL.off=true;return id===sayId?sayLocal(text,id):undefined});
+  }
+  return sayLocal(text,id);
+}
+function sayLocal(text,id){
+  if(!("speechSynthesis" in window)){setMode("idle");return Promise.resolve()}
   const parts=String(text).match(/[^.!?]+[.!?]*/g)||[text];
   return new Promise(res=>{let i=0;const next=()=>{if(id!==sayId)return res();if(i>=parts.length){setMode("idle");return res()}
     const u=new SpeechSynthesisUtterance(parts[i++].trim());if(voice){u.voice=voice;u.lang=voice.lang}u.rate=vRate;u.pitch=1;
@@ -328,12 +361,12 @@ function listenOnce(cb,ms){
   rec.onend=()=>{clearTimeout(tm);if(mode==="listening")setMode("idle");if(!done)cb("")};
   try{rec.start()}catch(e){}
 }
-$("#mic").onclick=()=>{if(mode==="listening"){try{rec.stop()}catch(e){}return}listenOnce(t=>{if(t)handle(t)})};
+$("#mic").onclick=()=>{if(mode==="listening"){try{rec.stop()}catch(e){}return}listenOnce(async t=>{if(t)await handle(t);if(hf.on)hfResume()})};
 $("#askF").onsubmit=e=>{e.preventDefault();const t=$("#askI").value.trim();if(!t)return;$("#heard").textContent="“"+t+"”";$("#askI").value="";handle(t)};
 document.querySelectorAll(".hint button").forEach(b=>b.onclick=()=>{$("#heard").textContent="“"+b.dataset.q+"”";handle(b.dataset.q)});
 
 /* ===== brain (rule-based until the AI brain is connected) ===== */
-function handle(raw){
+async function handle(raw){
   const t=raw.toLowerCase();
   if(/\b(book|schedule)\b/.test(t))return cmdBook(raw);
   if(/good morning|briefing|wake/.test(t))return briefing();
@@ -510,7 +543,7 @@ $("#testBtn").onclick=()=>{try{actx=actx||new (window.AudioContext||window.webki
 function beep(){ // loud fallback if the YouTube song can't play
   if(!actx||beepT)return;const go=()=>{for(let i=0;i<3;i++){const o=actx.createOscillator(),g=actx.createGain();o.type="square";o.frequency.value=880;g.gain.value=.25;o.connect(g).connect(actx.destination);o.start(actx.currentTime+i*.25);o.stop(actx.currentTime+i*.25+.15)}};go();beepT=setInterval(go,1200)}
 function ring(test){
-  if(ringing)return;ringing=true;$("#night").hidden=true;
+  if(ringing)return;ringing=true;hfPause();$("#night").hidden=true;
   code=String(Math.floor(1000+Math.random()*9000));$("#code").textContent=code;$("#codeI").value="";$("#codeMsg").textContent=test?"Test run. Type the code to stop.":"";
   $("#wakeP").textContent=WAKE[Math.floor(Math.random()*WAKE.length)];$("#wake").hidden=false;setTimeout(()=>$("#codeI").focus(),50);keepAwake();
   clearTimeout(unlockT);let v=40;
@@ -522,58 +555,49 @@ function ring(test){
 function stopRing(){ringing=false;clearInterval(rampT);clearInterval(beepT);beepT=null;try{songA.pause()}catch(e){}try{player&&player.pauseVideo()}catch(e){}}
 $("#codeF").onsubmit=async e=>{e.preventDefault();if($("#codeI").value.trim()!==code){$("#codeMsg").textContent="Wrong code. Look closer.";$("#codeI").value="";return}
   stopRing();armed=false;updArm();$("#wake").hidden=true;try{document.fullscreenElement&&document.exitFullscreen()}catch(e){}
-  await say($("#wakeP").textContent);await say(wxSpeech());await say(todaySpeech());await say("Emails and lessons come online in the next upgrade. Let's get it, Hayden.")};
+  await say($("#wakeP").textContent);await say(wxSpeech());await say(todaySpeech());await say("Emails and lessons come online in the next upgrade. Let's get it, Hayden.");if(hf.on)hfResume()};
 function checkAlarm(){
   if(!armed||ringing)return;const d=nowMin()-alarmAt();
   if(d>=0&&d<120&&store.get("fired","")!==ld()){store.set("fired",ld());ring(false)}
   $("#nClk").textContent=new Date().toLocaleTimeString("en-ZA",{hour:"2-digit",minute:"2-digit",timeZone:TZ});
 }
-/* ===== hands-free: double clap, then "Hey Jarvis" ===== */
-const hf={on:false,stream:null,ctx:null,node:null,peaks:[],last:0,floor:.005,busy:false};
-const sensThr=()=>.75-(+$("#hfSens").value)*.06; // 1 → 0.69 (needs loud claps) … 10 → 0.15
-$("#hfSens").value=store.get("sens",5);$("#hfSens").onchange=()=>store.set("sens",+$("#hfSens").value);
-function hfUi(){$("#hfChip").textContent=hf.on?"Listening for claps":"Mic off";$("#hfChip").className="chip "+(hf.on?"live":"off");$("#hfBtn").textContent=hf.on?"Switch off clap wake":"Switch on clap wake"}
-async function hfStart(){
-  if(hf.on)return true;
-  try{hf.stream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:false,noiseSuppression:false,autoGainControl:false}})}catch(e){$("#hfMsg").textContent="Jarvis needs microphone access for clap wake. Allow it in the browser's site settings.";return false}
-  hf.ctx=new (window.AudioContext||window.webkitAudioContext)();await hf.ctx.resume().catch(()=>{});
-  if(hf.ctx.state!=="running"){hf.stream.getTracks().forEach(t=>t.stop());return false}
-  const src=hf.ctx.createMediaStreamSource(hf.stream);hf.node=hf.ctx.createScriptProcessor(1024,1,1);
-  hf.node.onaudioprocess=e=>{ // runs even when the tab is in the background
-    const d=e.inputBuffer.getChannelData(0);let pk=0,sum=0;for(let i=0;i<d.length;i++){const a=Math.abs(d[i]);if(a>pk)pk=a;sum+=a*a}
-    const rms=Math.sqrt(sum/d.length),now=performance.now();
-    if(pk>sensThr()&&pk>hf.floor*10&&now-hf.last>110){hf.last=now;clap(now)}else hf.floor=hf.floor*.98+rms*.02;
+/* ===== always listening for "Hey Jarvis" ===== */
+const WAKE_RE=/\b(?:jarvis|jarvas|javis|jervis|travis|garvis)\b(.*)$/i;
+const hf={on:false,rec:null,paused:false,fails:0};
+function hfUi(){$("#hfChip").textContent=hf.on?"Listening":"Not listening";$("#hfChip").className="chip "+(hf.on?"live":"off");$("#hfBtn").textContent=hf.on?"Stop listening":"Always listen for \"Hey Jarvis\""}
+function hfListen(){ // background recogniser that only reacts to the wake word
+  if(!hf.on||hf.paused||ringing)return;
+  if(mode!=="idle"){setTimeout(hfListen,800);return}
+  if(!SR){$("#hfMsg").textContent="Your browser can't listen. Use Chrome or Edge.";hfStop();return}
+  const r=new SR();hf.rec=r;r.lang="en-ZA";r.continuous=true;r.interimResults=true;let fired=false;
+  r.onresult=e=>{
+    for(let i=e.resultIndex;i<e.results.length;i++){const t=e.results[i][0].transcript,m=t.match(WAKE_RE);if(!m||fired)continue;
+      const rest=m[1].replace(/^[\s,.!?]+/,"").trim();
+      if(!e.results[i].isFinal&&rest.split(/\s+/).filter(Boolean).length<2)continue; // a command may still be coming
+      fired=true;hf.fails=0;try{r.abort()}catch(x){}woke(rest,t);return}
   };
-  src.connect(hf.node);hf.node.connect(hf.ctx.destination); // output is silent
-  hf.on=true;store.set("hf",true);hfUi();$("#hfMsg").textContent='Ready. Clap twice, then say "Hey Jarvis". Keep this window open on screen.';return true;
+  r.onerror=e=>{if(e.error==="not-allowed"||e.error==="service-not-allowed"){hfStop();$("#hfMsg").textContent="Jarvis needs the microphone. Allow it in the browser's site settings, then switch listening on again."}else hf.fails++};
+  r.onend=()=>{if(hf.rec===r)hf.rec=null;if(!fired&&hf.on&&!hf.paused)setTimeout(hfListen,hf.fails>5?3000:250)}; // the browser stops every minute or so; start again
+  try{r.start()}catch(x){setTimeout(hfListen,1000)}
 }
-function hfStop(){hf.on=false;store.set("hf",false);try{hf.node.disconnect();hf.stream.getTracks().forEach(t=>t.stop());hf.ctx.close()}catch(e){}hfUi();$("#hfMsg").textContent='Clap wake is off.'}
+function hfPause(){hf.paused=true;if(hf.rec){try{hf.rec.abort()}catch(e){}hf.rec=null}}
+function hfResume(){hf.paused=false;if(hf.on)setTimeout(hfListen,400)}
+async function woke(rest,heard){
+  hfPause();$("#heard").textContent="“"+heard.trim()+"”";window.focus();$("#orb").scrollIntoView({behavior:"smooth",block:"center"});
+  if(rest.split(/\s+/).filter(Boolean).length>=2){await handle(rest);hfResume();return}
+  await say(["Yes, Hayden?","At your service.","Go ahead, Hayden.","I'm listening."][Math.floor(Math.random()*4)]);
+  listenOnce(async c=>{if(c)await handle(c);hfResume()},9000);
+}
+function hfStart(){hf.on=true;hf.paused=false;store.set("hf",true);hfUi();$("#hfMsg").textContent='Listening. Say "Hey Jarvis", then your command. Keep this window open.';hfListen()}
+function hfStop(){hf.on=false;store.set("hf",false);hfPause();hf.paused=false;hfUi();$("#hfMsg").textContent='Not listening. Tap the mic or switch listening on.'}
 $("#hfBtn").onclick=()=>hf.on?hfStop():hfStart();
-function clap(now){
-  if(ringing||hf.busy||mode!=="idle")return;
-  hf.peaks=hf.peaks.filter(t=>now-t<900);hf.peaks.push(now);
-  if(hf.peaks.length===2){const gap=hf.peaks[1]-hf.peaks[0];if(gap>150&&gap<900){hf.peaks=[];setTimeout(()=>{if(performance.now()-hf.last>300)doubleClap()},320)}} // a third clap right after cancels it
-  if(hf.peaks.length>2)hf.peaks=[];
-}
-function chime(){const c=hf.ctx||actx;if(!c)return;[660,990].forEach((f,i)=>{const o=c.createOscillator(),g=c.createGain();o.frequency.value=f;g.gain.setValueAtTime(.0001,c.currentTime+i*.12);g.gain.exponentialRampToValueAtTime(.2,c.currentTime+i*.12+.02);g.gain.exponentialRampToValueAtTime(.0001,c.currentTime+i*.12+.25);o.connect(g).connect(c.destination);o.start(c.currentTime+i*.12);o.stop(c.currentTime+i*.12+.3)})}
-function doubleClap(){
-  hf.busy=true;chime();$("#heard").textContent="Double clap detected. Say “Hey Jarvis”.";
-  listenOnce(t=>{
-    const m=t.toLowerCase().match(/(?:jarvis|jarvas|javis|jervis|travis|garvis)(.*)$/);
-    if(!m){hf.busy=false;$("#heard").textContent="";setMode("idle");return}
-    window.focus();$("#orb").scrollIntoView({behavior:"smooth",block:"center"});
-    const rest=m[1].replace(/^[\s,.!?]+/,"").trim();
-    if(rest.split(" ").length>=2){hf.busy=false;handle(rest);return}
-    const h=new Date(new Date().toLocaleString("en-US",{timeZone:TZ})).getHours();
-    say((h<12?"Morning":h<18?"Afternoon":"Evening")+", Hayden. What do you need?").then(()=>listenOnce(c=>{hf.busy=false;if(c)handle(c)},9000));
-  },7000);
-}
-async function hfAuto(){ // switch clap wake back on after a reload if the mic was already allowed
+$("#mic").addEventListener("click",()=>{if(hf.on)hfPause()},true);
+async function hfAuto(){
   if(!store.get("hf",false))return;let st="prompt";try{st=(await navigator.permissions.query({name:"microphone"})).state}catch(e){}
-  if(st==="granted"&&await hfStart())return;
-  $("#hfMsg").textContent="Click anywhere on Jarvis to switch clap wake back on.";document.addEventListener("click",()=>hfStart(),{once:true});
+  if(st==="granted"){hfStart();return}
+  $("#hfMsg").textContent='Click anywhere on Jarvis to start listening for "Hey Jarvis".';document.addEventListener("click",()=>{if(!hf.on)hfStart()},{once:true});
 }
-hfUi();hfAuto();
+hfUi();hfAuto();elSetup();
 if(location.hash==="#arm")toast("Tap 'Arm alarm for tonight' to arm.");
 updArm();loadYT();
 
