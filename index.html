@@ -389,13 +389,29 @@ async function elAudio(text){
 }
 function say(text){
   $("#say").textContent=text;const id=++sayId;
-  try{talkA.pause()}catch(e){}if("speechSynthesis" in window)speechSynthesis.cancel();
+  try{talkA.pause()}catch(e){}try{VZ.cur&&VZ.cur.stop()}catch(e){}VZ.cur=null;if("speechSynthesis" in window)speechSynthesis.cancel();
   if(EL.key&&!EL.off){
     setMode("thinking");
-    return elAudio(text).then(u=>new Promise(res=>{if(id!==sayId)return res();talkA.src=u;talkA.onplay=()=>setMode("speaking");talkA.onended=talkA.onerror=talkA.onpause=()=>{if(id===sayId)setMode("idle");res()};talkA.play().catch(()=>{setMode("idle");res()})}))
+    return elAudio(text).then(u=>playVoice(u,id)).then(ok=>ok?undefined:new Promise(res=>{if(id!==sayId)return res();talkA.src=talkA.__u;talkA.onplay=()=>setMode("speaking");talkA.onended=talkA.onerror=talkA.onpause=()=>{if(id===sayId)setMode("idle");res()};talkA.play().catch(()=>{setMode("idle");res()})}))
       .catch(e=>{elMsg(e.message,"bad");if(/credits|key/.test(e.message))EL.off=true;return id===sayId?sayLocal(text,id):undefined});
   }
   return sayLocal(text,id);
+}
+/* play the ElevenLabs clip through the sound analyser so the core can react to it.
+   Returns false if the browser's audio engine isn't available yet; then the plain audio player is used. */
+async function playVoice(url,id){
+  talkA.__u=url;
+  if(typeof VZ==="undefined"||!VZ.ctx)return false;
+  if(VZ.ctx.state!=="running"){try{await VZ.ctx.resume()}catch(e){}}
+  if(VZ.ctx.state!=="running")return false;
+  let buf=VZ.bufs.get(url);
+  if(!buf){try{buf=await VZ.ctx.decodeAudioData(await (await fetch(url)).arrayBuffer());VZ.bufs.set(url,buf)}catch(e){return false}}
+  if(id!==sayId)return true;
+  return new Promise(res=>{
+    const src=VZ.ctx.createBufferSource();src.buffer=buf;src.connect(VZ.talk);VZ.cur=src;
+    src.onended=()=>{if(VZ.cur===src)VZ.cur=null;if(id===sayId)setMode("idle");res(true)};
+    setMode("speaking");src.start();
+  });
 }
 function sayLocal(text,id){
   if(!("speechSynthesis" in window)){setMode("idle");return Promise.resolve()}
@@ -948,10 +964,10 @@ function tick(){const n=new Date();$("#clk").textContent=n.toLocaleTimeString("e
 /* ===== voice-reactive core ===== */
 // Sound sources: Jarvis's ElevenLabs voice (real audio analysis), your mic while Jarvis listens,
 // or a simulated voice envelope for the built-in browser voice (browsers don't expose its audio).
-const VZ={ctx:null,talk:null,mic:null,micStream:null,kick:0,f:new Uint8Array(128),w:new Uint8Array(256)};
+const VZ={ctx:null,talk:null,cur:null,bufs:new Map(),mic:null,micStream:null,kick:0,f:new Uint8Array(128),w:new Uint8Array(256)};
 function vizInit(){ // needs a click or key press so the browser allows audio
   if(VZ.ctx){VZ.ctx.resume().catch(()=>{});return}
-  try{VZ.ctx=new (window.AudioContext||window.webkitAudioContext)();const src=VZ.ctx.createMediaElementSource(talkA);VZ.talk=VZ.ctx.createAnalyser();VZ.talk.fftSize=256;VZ.talk.smoothingTimeConstant=.6;src.connect(VZ.talk);VZ.talk.connect(VZ.ctx.destination)}catch(e){VZ.ctx=null}
+  try{VZ.ctx=new (window.AudioContext||window.webkitAudioContext)();VZ.talk=VZ.ctx.createAnalyser();VZ.talk.fftSize=256;VZ.talk.smoothingTimeConstant=.6;VZ.talk.connect(VZ.ctx.destination)}catch(e){VZ.ctx=null}
 }
 ["pointerdown","keydown"].forEach(ev=>document.addEventListener(ev,vizInit,{capture:true}));
 async function micViz(on){
@@ -962,7 +978,7 @@ async function micViz(on){
 }
 function vizRead(t){ // -> {lvl 0..1, bins[64] 0..1, wave[64] -1..1}
   const bins=new Array(64).fill(0),wave=new Array(64).fill(0);let lvl=0;
-  const an=mode==="speaking"&&VZ.talk&&!talkA.paused?VZ.talk:mode==="listening"&&VZ.mic?VZ.mic:null;
+  const an=mode==="speaking"&&VZ.cur?VZ.talk:mode==="listening"&&VZ.mic?VZ.mic:null;
   if(an){an.getByteFrequencyData(VZ.f);an.getByteTimeDomainData(VZ.w);let sum=0;
     for(let i=0;i<64;i++){bins[i]=Math.min(1,(VZ.f[i+2]/255)*1.25)}
     for(let i=0;i<VZ.w.length;i++){const v=(VZ.w[i]-128)/128;sum+=v*v}
