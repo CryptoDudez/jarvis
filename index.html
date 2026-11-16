@@ -101,7 +101,9 @@ input,select{width:100%;background:#030b14;color:var(--ice);border:1px solid var
       <div class="kv">
         <div><div class="lbl">Alarm</div><input id="alarmT" type="time" value="06:00" aria-label="Alarm time"></div>
         <div><div class="lbl">Wake song</div><div class="num sm" style="margin-top:8px">Easy Lover</div></div>
-        <div class="full" style="grid-column:1/-1"><div class="lbl">YouTube link for the song</div><input id="songU" placeholder="https://www.youtube.com/watch?v=..." aria-label="YouTube link for the wake song"></div>
+        <div style="grid-column:1/-1"><div class="lbl">Song file on this laptop (most reliable)</div><input id="songF" type="file" accept="audio/*" aria-label="Song file for the alarm"></div>
+        <div style="grid-column:1/-1"><div class="lbl">Or a YouTube link</div><input id="songU" placeholder="https://www.youtube.com/watch?v=..." aria-label="YouTube link for the wake song"></div>
+        <div style="grid-column:1/-1" class="mu" id="songMsg">Checking the song…</div>
       </div>
       <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap">
         <button id="armBtn">Arm alarm for tonight</button>
@@ -109,6 +111,18 @@ input,select{width:100%;background:#030b14;color:var(--ice);border:1px solid var
         <button class="ghost" id="morningBtn">Briefing</button>
       </div>
       <div class="mu" style="margin-top:10px">Before bed: laptop plugged in, volume up, tap Arm. The screen goes dark and stays awake. At alarm time Easy Lover plays full blast and only stops when you walk over and type the code on screen.</div>
+    </div>
+
+    <div class="panel" id="pSet">
+      <div class="ph"><h2>Voice · Hands-free</h2><span class="chip off" id="hfChip">Mic off</span></div>
+      <div class="lbl">Jarvis voice</div>
+      <div style="display:flex;gap:8px"><select id="vSel" aria-label="Jarvis voice"></select><button class="ghost" id="vTest" type="button">Test</button></div>
+      <div class="kv" style="margin-top:10px">
+        <div><div class="lbl">Speed</div><input id="vRate" type="range" min="0.8" max="1.25" step="0.05" value="1" aria-label="Voice speed"></div>
+        <div><div class="lbl">Clap sensitivity</div><input id="hfSens" type="range" min="1" max="10" step="1" value="5" aria-label="Clap sensitivity"></div>
+      </div>
+      <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap"><button id="hfBtn" type="button">Switch on clap wake</button></div>
+      <div class="mu" style="margin-top:10px" id="hfMsg">Clap twice, then say "Hey Jarvis". Keep the Jarvis window open on screen.</div>
     </div>
 
     <div class="panel">
@@ -278,30 +292,43 @@ const store={get(k,d){try{const v=localStorage.getItem("jv_"+k);return v==null?d
 function toast(t){const e=$("#toast");e.textContent=t;e.hidden=false;clearTimeout(toast.t);toast.t=setTimeout(()=>e.hidden=true,4000)}
 
 /* ===== voice out ===== */
-let voice=null,mode="idle";
-function pickVoice(){const v=speechSynthesis.getVoices();voice=v.find(x=>/en-GB/i.test(x.lang)&&/male|daniel|george|arthur/i.test(x.name))||v.find(x=>/en-GB/i.test(x.lang))||v.find(x=>/^en/i.test(x.lang))||null}
+let voice=null,mode="idle",vRate=+store.get("vrate",1);
+const vScore=v=>{let s=0;if(!/^en/i.test(v.lang))return -1;if(/natural|neural/i.test(v.name))s+=60;if(/online/i.test(v.name))s+=20;if(/google/i.test(v.name))s+=25;if(/en-ZA/i.test(v.lang))s+=12;if(/en-GB/i.test(v.lang))s+=10;if(/\b(ryan|luke|thomas|guy|brian|andrew|christopher|eric|daniel|george|arthur|oliver|william|male)\b/i.test(v.name))s+=8;if(/compact|espeak/i.test(v.name))s-=30;return s};
+function pickVoice(){
+  if(!("speechSynthesis" in window))return;const all=speechSynthesis.getVoices().filter(v=>vScore(v)>=0).sort((a,b)=>vScore(b)-vScore(a));if(!all.length)return;
+  const saved=store.get("voice","");voice=all.find(v=>v.name===saved)||all[0];
+  $("#vSel").innerHTML=all.map(v=>`<option value="${esc(v.name)}" ${v===voice?"selected":""}>${/natural|neural/i.test(v.name)?"★ ":""}${esc(v.name.replace(/^Microsoft /,"").replace(/ - English.*$/,""))} · ${esc(v.lang)}</option>`).join("");
+}
 if("speechSynthesis" in window){pickVoice();speechSynthesis.onvoiceschanged=pickVoice}
-function say(text){
+$("#vSel").onchange=()=>{voice=speechSynthesis.getVoices().find(v=>v.name===$("#vSel").value)||voice;store.set("voice",voice&&voice.name);say("Hello Hayden. This is how I sound now.")};
+$("#vRate").value=vRate;$("#vRate").onchange=()=>{vRate=+$("#vRate").value;store.set("vrate",vRate)};
+$("#vTest").onclick=()=>say("Good morning, Hayden. Wind is pumping at twenty two knots. Shall I book your first wash?");
+let sayId=0;
+function say(text){ // speaks sentence by sentence: sounds smoother and avoids Chrome cutting off long speech
   $("#say").textContent=text;
   if(!("speechSynthesis" in window))return Promise.resolve();
-  return new Promise(res=>{speechSynthesis.cancel();const u=new SpeechSynthesisUtterance(text);if(voice)u.voice=voice;u.rate=1.02;u.pitch=.9;
-    u.onstart=()=>setMode("speaking");u.onend=u.onerror=()=>{setMode("idle");res()};speechSynthesis.speak(u)});
+  const id=++sayId;speechSynthesis.cancel();
+  const parts=String(text).match(/[^.!?]+[.!?]*/g)||[text];
+  return new Promise(res=>{let i=0;const next=()=>{if(id!==sayId)return res();if(i>=parts.length){setMode("idle");return res()}
+    const u=new SpeechSynthesisUtterance(parts[i++].trim());if(voice){u.voice=voice;u.lang=voice.lang}u.rate=vRate;u.pitch=1;
+    u.onstart=()=>setMode("speaking");u.onend=next;u.onerror=next;speechSynthesis.speak(u)};next()});
 }
 function setMode(m){mode=m;$("#state").textContent={idle:"Online",listening:"Listening",speaking:"Speaking",thinking:"Processing"}[m]||m;$("#mic").classList.toggle("on",m==="listening")}
 
 /* ===== voice in ===== */
 const SR=window.SpeechRecognition||window.webkitSpeechRecognition;let rec=null;
-$("#mic").onclick=()=>{
-  if(!SR){toast("Voice input needs Chrome. Type your command instead.");$("#askI").focus();return}
-  if(mode==="listening"){rec&&rec.stop();return}
+function listenOnce(cb,ms){
+  if(!SR){toast("Voice input needs Chrome or Edge. Type your command instead.");return}
+  try{rec&&rec.abort()}catch(e){}
   speechSynthesis&&speechSynthesis.cancel();
-  rec=new SR();rec.lang="en-ZA";rec.interimResults=true;rec.maxAlternatives=1;
-  rec.onstart=()=>setMode("listening");
-  rec.onresult=e=>{const t=[...e.results].map(r=>r[0].transcript).join(" ");$("#heard").textContent="“"+t+"”";if(e.results[e.results.length-1].isFinal)handle(t)};
-  rec.onerror=e=>{setMode("idle");if(e.error==="not-allowed")toast("Allow the microphone for Jarvis in Chrome settings.")};
-  rec.onend=()=>{if(mode==="listening")setMode("idle")};
-  rec.start();
-};
+  rec=new SR();rec.lang="en-ZA";rec.interimResults=true;rec.maxAlternatives=1;let done=false,tm=null;
+  rec.onstart=()=>{setMode("listening");if(ms)tm=setTimeout(()=>{try{rec.stop()}catch(e){}},ms)};
+  rec.onresult=e=>{const t=[...e.results].map(r=>r[0].transcript).join(" ");$("#heard").textContent="“"+t+"”";if(e.results[e.results.length-1].isFinal&&!done){done=true;clearTimeout(tm);cb(t)}};
+  rec.onerror=e=>{setMode("idle");if(e.error==="not-allowed")toast("Allow the microphone for Jarvis in the browser settings.")};
+  rec.onend=()=>{clearTimeout(tm);if(mode==="listening")setMode("idle");if(!done)cb("")};
+  try{rec.start()}catch(e){}
+}
+$("#mic").onclick=()=>{if(mode==="listening"){try{rec.stop()}catch(e){}return}listenOnce(t=>{if(t)handle(t)})};
 $("#askF").onsubmit=e=>{e.preventDefault();const t=$("#askI").value.trim();if(!t)return;$("#heard").textContent="“"+t+"”";$("#askI").value="";handle(t)};
 document.querySelectorAll(".hint button").forEach(b=>b.onclick=()=>{$("#heard").textContent="“"+b.dataset.q+"”";handle(b.dataset.q)});
 
@@ -439,9 +466,21 @@ async function briefing(){
 $("#morningBtn").onclick=briefing;
 /* ===== laptop alarm ===== */
 const DEFAULT_SONG="https://www.youtube.com/watch?v=JkRKT6T0QLg";
-let armed=false,ringing=false,player=null,ytReady=false,actx=null,beepT=null,rampT=null,wl=null,code="";
+let armed=false,ringing=false,player=null,ytReady=false,ytErr=0,actx=null,beepT=null,rampT=null,wl=null,code="",unlockT=null;
+const songA=new Audio();songA.loop=true;songA.preload="auto";
+const idb={open(){return new Promise((res,rej)=>{const r=indexedDB.open("jarvis",1);r.onupgradeneeded=()=>r.result.createObjectStore("f");r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error)})},
+  async put(k,v){const d=await this.open();return new Promise((res,rej)=>{const t=d.transaction("f","readwrite");t.objectStore("f").put(v,k);t.oncomplete=res;t.onerror=()=>rej(t.error)})},
+  async get(k){try{const d=await this.open();return await new Promise(res=>{const r=d.transaction("f").objectStore("f").get(k);r.onsuccess=()=>res(r.result);r.onerror=()=>res(null)})}catch(e){return null}}};
+function songStatus(){
+  const m=$("#songMsg");
+  if(songA.src){m.innerHTML='<span style="color:var(--ok)">●</span> Using song file: '+esc(store.get("songName","song"))+' <button class="ghost" type="button" id="songClr" style="min-height:26px;padding:4px 8px;font-size:9px;margin-left:6px">Remove</button>';$("#songClr").onclick=async()=>{await idb.put("song",null);songA.removeAttribute("src");songA.load();songStatus()};return}
+  if(ytErr){m.innerHTML='<span style="color:var(--bad)">●</span> '+(ytErr===100?"That YouTube video doesn't exist.":(ytErr===101||ytErr===150)?"The owner of that YouTube video blocks it from playing on other sites. Paste a different upload (a lyrics video usually works) or use a song file.":"YouTube can't play that link (error "+ytErr+").");return}
+  m.innerHTML=ytReady?'<span style="color:var(--ok)">●</span> YouTube song loaded. Hit Test alarm to check it.':'<span style="color:var(--warn)">●</span> Loading YouTube player…';
+}
+$("#songF").onchange=async()=>{const f=$("#songF").files[0];if(!f)return;await idb.put("song",f);store.set("songName",f.name);songA.src=URL.createObjectURL(f);songStatus();toast("Song file saved for the alarm.")};
+idb.get("song").then(f=>{if(f){songA.src=URL.createObjectURL(f)}songStatus()});
 $("#alarmT").value=store.get("alarm","06:00");$("#alarmT").onchange=()=>{store.set("alarm",$("#alarmT").value);store.set("fired","");updArm();toast("Alarm set for "+$("#alarmT").value+".")};
-$("#songU").value=store.get("song",DEFAULT_SONG);$("#songU").onchange=()=>{store.set("song",$("#songU").value.trim()||DEFAULT_SONG);player=null;loadYT();toast("Wake song saved.")};
+$("#songU").value=store.get("song",DEFAULT_SONG);$("#songU").onchange=()=>{store.set("song",$("#songU").value.trim()||DEFAULT_SONG);ytErr=0;loadYT();songStatus();toast("Wake song saved.")};
 const vid=u=>{const m=String(u).match(/(?:v=|youtu\.be\/|embed\/|shorts\/)([\w-]{11})/);return m?m[1]:"JkRKT6T0QLg"};
 function loadYT(){
   if(window.YT&&YT.Player){makePlayer();return}
@@ -453,9 +492,12 @@ function makePlayer(){
   $("#ytBox").innerHTML='<div id="yt"></div>';ytReady=false;
   const id=vid(store.get("song",DEFAULT_SONG));
   player=new YT.Player("yt",{width:200,height:120,videoId:id,playerVars:{autoplay:0,controls:0,playsinline:1,loop:1,playlist:id},
-    events:{onReady:()=>{ytReady=true},onError:()=>{ytReady=false;if(ringing)beep()},onStateChange:e=>{if(e.data===0&&ringing)player.playVideo()}}});
+    events:{onReady:()=>{ytReady=true;songStatus()},onError:e=>{ytReady=false;ytErr=e.data||1;songStatus();if(ringing&&!songA.src)beep()},onStateChange:e=>{if(e.data===0&&ringing)player.playVideo()}}});
 }
-function unlockAudio(){try{actx=actx||new (window.AudioContext||window.webkitAudioContext)();actx.resume()}catch(e){}if(ytReady){player.mute();player.playVideo();setTimeout(()=>{try{player.pauseVideo();player.seekTo(0);player.unMute()}catch(e){}},400)}}
+function unlockAudio(){ // called from a click so the browser lets the alarm make sound later
+  try{actx=actx||new (window.AudioContext||window.webkitAudioContext)();actx.resume()}catch(e){}
+  if(songA.src){songA.muted=true;songA.play().then(()=>{songA.pause();songA.currentTime=0;songA.muted=false}).catch(()=>{songA.muted=false})}
+  if(ytReady){try{player.mute();player.playVideo()}catch(e){}clearTimeout(unlockT);unlockT=setTimeout(()=>{if(ringing)return;try{player.pauseVideo();player.seekTo(0);player.unMute()}catch(e){}},400)}}
 async function keepAwake(){try{if(navigator.wakeLock)wl=await navigator.wakeLock.request("screen")}catch(e){}}
 document.addEventListener("visibilitychange",()=>{if(document.visibilityState==="visible"&&(armed||ringing))keepAwake()});
 function alarmAt(){const[h,m]=$("#alarmT").value.split(":").map(Number);return h*60+m}
@@ -464,18 +506,20 @@ function updArm(){$("#alarmChip").textContent=armed?"Armed · "+$("#alarmT").val
 $("#armBtn").onclick=()=>{unlockAudio();keepAwake();armed=true;store.set("fired","");updArm();$("#night").hidden=false;try{document.documentElement.requestFullscreen&&document.documentElement.requestFullscreen().catch(()=>{})}catch(e){}
   say("Alarm armed for "+$("#alarmT").value+". Sleep well, Hayden.")};
 $("#disarmBtn").onclick=()=>{armed=false;$("#night").hidden=true;updArm();try{document.fullscreenElement&&document.exitFullscreen()}catch(e){}toast("Alarm disarmed.")};
-$("#testBtn").onclick=()=>{unlockAudio();ring(true)};
+$("#testBtn").onclick=()=>{try{actx=actx||new (window.AudioContext||window.webkitAudioContext)();actx.resume()}catch(e){}ring(true)};
 function beep(){ // loud fallback if the YouTube song can't play
   if(!actx||beepT)return;const go=()=>{for(let i=0;i<3;i++){const o=actx.createOscillator(),g=actx.createGain();o.type="square";o.frequency.value=880;g.gain.value=.25;o.connect(g).connect(actx.destination);o.start(actx.currentTime+i*.25);o.stop(actx.currentTime+i*.25+.15)}};go();beepT=setInterval(go,1200)}
 function ring(test){
   if(ringing)return;ringing=true;$("#night").hidden=true;
   code=String(Math.floor(1000+Math.random()*9000));$("#code").textContent=code;$("#codeI").value="";$("#codeMsg").textContent=test?"Test run. Type the code to stop.":"";
   $("#wakeP").textContent=WAKE[Math.floor(Math.random()*WAKE.length)];$("#wake").hidden=false;setTimeout(()=>$("#codeI").focus(),50);keepAwake();
-  let started=false;
-  if(ytReady){try{player.unMute();player.setVolume(40);player.seekTo(0);player.playVideo();let v=40;rampT=setInterval(()=>{v=Math.min(100,v+5);try{player.setVolume(v)}catch(e){}if(v>=100)clearInterval(rampT)},4000)}catch(e){}}
-  setTimeout(()=>{try{started=ytReady&&player.getPlayerState()===1}catch(e){}if(!started&&ringing)beep()},5000);
+  clearTimeout(unlockT);let v=40;
+  if(songA.src){songA.muted=false;songA.volume=.4;songA.currentTime=0;songA.play().catch(()=>{})}
+  else if(ytReady){try{player.unMute();player.setVolume(40);player.seekTo(0);player.playVideo()}catch(e){}}
+  rampT=setInterval(()=>{v=Math.min(100,v+5);try{if(songA.src)songA.volume=v/100;else player.setVolume(v)}catch(e){}if(v>=100)clearInterval(rampT)},4000);
+  setTimeout(()=>{let ok=false;try{ok=songA.src?!songA.paused:(ytReady&&player.getPlayerState()===1)}catch(e){}if(!ok&&ringing){beep();$("#codeMsg").textContent="Couldn't play your song, so you get the beeper. Check the song box on the wake-up panel."}},5000);
 }
-function stopRing(){ringing=false;clearInterval(rampT);clearInterval(beepT);beepT=null;try{player&&player.pauseVideo()}catch(e){}}
+function stopRing(){ringing=false;clearInterval(rampT);clearInterval(beepT);beepT=null;try{songA.pause()}catch(e){}try{player&&player.pauseVideo()}catch(e){}}
 $("#codeF").onsubmit=async e=>{e.preventDefault();if($("#codeI").value.trim()!==code){$("#codeMsg").textContent="Wrong code. Look closer.";$("#codeI").value="";return}
   stopRing();armed=false;updArm();$("#wake").hidden=true;try{document.fullscreenElement&&document.exitFullscreen()}catch(e){}
   await say($("#wakeP").textContent);await say(wxSpeech());await say(todaySpeech());await say("Emails and lessons come online in the next upgrade. Let's get it, Hayden.")};
@@ -484,6 +528,52 @@ function checkAlarm(){
   if(d>=0&&d<120&&store.get("fired","")!==ld()){store.set("fired",ld());ring(false)}
   $("#nClk").textContent=new Date().toLocaleTimeString("en-ZA",{hour:"2-digit",minute:"2-digit",timeZone:TZ});
 }
+/* ===== hands-free: double clap, then "Hey Jarvis" ===== */
+const hf={on:false,stream:null,ctx:null,node:null,peaks:[],last:0,floor:.005,busy:false};
+const sensThr=()=>.75-(+$("#hfSens").value)*.06; // 1 → 0.69 (needs loud claps) … 10 → 0.15
+$("#hfSens").value=store.get("sens",5);$("#hfSens").onchange=()=>store.set("sens",+$("#hfSens").value);
+function hfUi(){$("#hfChip").textContent=hf.on?"Listening for claps":"Mic off";$("#hfChip").className="chip "+(hf.on?"live":"off");$("#hfBtn").textContent=hf.on?"Switch off clap wake":"Switch on clap wake"}
+async function hfStart(){
+  if(hf.on)return true;
+  try{hf.stream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:false,noiseSuppression:false,autoGainControl:false}})}catch(e){$("#hfMsg").textContent="Jarvis needs microphone access for clap wake. Allow it in the browser's site settings.";return false}
+  hf.ctx=new (window.AudioContext||window.webkitAudioContext)();await hf.ctx.resume().catch(()=>{});
+  if(hf.ctx.state!=="running"){hf.stream.getTracks().forEach(t=>t.stop());return false}
+  const src=hf.ctx.createMediaStreamSource(hf.stream);hf.node=hf.ctx.createScriptProcessor(1024,1,1);
+  hf.node.onaudioprocess=e=>{ // runs even when the tab is in the background
+    const d=e.inputBuffer.getChannelData(0);let pk=0,sum=0;for(let i=0;i<d.length;i++){const a=Math.abs(d[i]);if(a>pk)pk=a;sum+=a*a}
+    const rms=Math.sqrt(sum/d.length),now=performance.now();
+    if(pk>sensThr()&&pk>hf.floor*10&&now-hf.last>110){hf.last=now;clap(now)}else hf.floor=hf.floor*.98+rms*.02;
+  };
+  src.connect(hf.node);hf.node.connect(hf.ctx.destination); // output is silent
+  hf.on=true;store.set("hf",true);hfUi();$("#hfMsg").textContent='Ready. Clap twice, then say "Hey Jarvis". Keep this window open on screen.';return true;
+}
+function hfStop(){hf.on=false;store.set("hf",false);try{hf.node.disconnect();hf.stream.getTracks().forEach(t=>t.stop());hf.ctx.close()}catch(e){}hfUi();$("#hfMsg").textContent='Clap wake is off.'}
+$("#hfBtn").onclick=()=>hf.on?hfStop():hfStart();
+function clap(now){
+  if(ringing||hf.busy||mode!=="idle")return;
+  hf.peaks=hf.peaks.filter(t=>now-t<900);hf.peaks.push(now);
+  if(hf.peaks.length===2){const gap=hf.peaks[1]-hf.peaks[0];if(gap>150&&gap<900){hf.peaks=[];setTimeout(()=>{if(performance.now()-hf.last>300)doubleClap()},320)}} // a third clap right after cancels it
+  if(hf.peaks.length>2)hf.peaks=[];
+}
+function chime(){const c=hf.ctx||actx;if(!c)return;[660,990].forEach((f,i)=>{const o=c.createOscillator(),g=c.createGain();o.frequency.value=f;g.gain.setValueAtTime(.0001,c.currentTime+i*.12);g.gain.exponentialRampToValueAtTime(.2,c.currentTime+i*.12+.02);g.gain.exponentialRampToValueAtTime(.0001,c.currentTime+i*.12+.25);o.connect(g).connect(c.destination);o.start(c.currentTime+i*.12);o.stop(c.currentTime+i*.12+.3)})}
+function doubleClap(){
+  hf.busy=true;chime();$("#heard").textContent="Double clap detected. Say “Hey Jarvis”.";
+  listenOnce(t=>{
+    const m=t.toLowerCase().match(/(?:jarvis|jarvas|javis|jervis|travis|garvis)(.*)$/);
+    if(!m){hf.busy=false;$("#heard").textContent="";setMode("idle");return}
+    window.focus();$("#orb").scrollIntoView({behavior:"smooth",block:"center"});
+    const rest=m[1].replace(/^[\s,.!?]+/,"").trim();
+    if(rest.split(" ").length>=2){hf.busy=false;handle(rest);return}
+    const h=new Date(new Date().toLocaleString("en-US",{timeZone:TZ})).getHours();
+    say((h<12?"Morning":h<18?"Afternoon":"Evening")+", Hayden. What do you need?").then(()=>listenOnce(c=>{hf.busy=false;if(c)handle(c)},9000));
+  },7000);
+}
+async function hfAuto(){ // switch clap wake back on after a reload if the mic was already allowed
+  if(!store.get("hf",false))return;let st="prompt";try{st=(await navigator.permissions.query({name:"microphone"})).state}catch(e){}
+  if(st==="granted"&&await hfStart())return;
+  $("#hfMsg").textContent="Click anywhere on Jarvis to switch clap wake back on.";document.addEventListener("click",()=>hfStart(),{once:true});
+}
+hfUi();hfAuto();
 if(location.hash==="#arm")toast("Tap 'Arm alarm for tonight' to arm.");
 updArm();loadYT();
 
