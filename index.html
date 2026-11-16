@@ -1,0 +1,534 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><title>Jarvis</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#02060c">
+<link rel="manifest" href="manifest.webmanifest"><link rel="icon" type="image/png" href="icon-192.png"><link rel="apple-touch-icon" href="icon-192.png">
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<style>
+/* Layout: HUD with the core in the centre column, intel panels left, money + social right; one column on phones */
+:root{
+  --bg:#02060c; --panel:#06111d; --line:#0f2a42; --cyan:#29c8ff; --cyan-dim:#1679a8; --ice:#d9f4ff;
+  --mu:#6f93ad; --ok:#3ee08f; --warn:#ffb547; --bad:#ff5d6c;
+  --f-hud:"Chakra Petch","Rajdhani",system-ui,sans-serif; --f-body:"Inter",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; --f-mono:"JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--ice)}
+body{font:14px/1.45 var(--f-body);min-height:100vh;padding:env(safe-area-inset-top,0px) max(16px,env(safe-area-inset-right,0px)) calc(24px + env(safe-area-inset-bottom,0px)) max(16px,env(safe-area-inset-left,0px));
+  background:radial-gradient(ellipse at 50% 18%,rgba(41,200,255,.10),transparent 55%),var(--bg)}
+a{color:var(--cyan)}
+header{display:flex;justify-content:space-between;align-items:flex-end;gap:12px;padding:14px 2px 8px;border-bottom:1px solid var(--line);flex-wrap:wrap}
+.brand{font:700 20px/1 var(--f-hud);letter-spacing:.42em;color:var(--cyan);text-shadow:0 0 12px rgba(41,200,255,.55)}
+.brand small{display:block;font:500 10px/1.6 var(--f-mono);letter-spacing:.2em;color:var(--mu);margin-top:4px;text-shadow:none}
+.clock{text-align:right;font-family:var(--f-mono)}
+.clock b{display:block;font:600 26px/1 var(--f-hud);letter-spacing:.06em;color:var(--ice);font-variant-numeric:tabular-nums}
+.clock span{font-size:11px;color:var(--mu);letter-spacing:.12em;text-transform:uppercase}
+.grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.15fr) minmax(0,1fr);gap:16px;margin-top:16px;max-width:1320px;margin-inline:auto}
+.col{display:flex;flex-direction:column;gap:16px;min-width:0}
+.core{order:0}
+@media (max-width:980px){.grid{grid-template-columns:minmax(0,1fr)}.core{order:-1}}
+.panel{position:relative;background:linear-gradient(180deg,rgba(9,28,46,.85),rgba(4,12,22,.92));border:1px solid var(--line);padding:14px 14px 16px;min-width:0;
+  clip-path:polygon(0 0,calc(100% - 14px) 0,100% 14px,100% 100%,14px 100%,0 calc(100% - 14px))}
+.panel::before{content:"";position:absolute;left:0;top:0;width:44px;height:2px;background:var(--cyan);box-shadow:0 0 10px var(--cyan)}
+.ph{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:10px}
+.ph h2{margin:0;font:600 12px/1 var(--f-hud);letter-spacing:.22em;text-transform:uppercase;color:var(--cyan)}
+.chip{font:500 10px/1 var(--f-mono);letter-spacing:.1em;text-transform:uppercase;padding:4px 7px;border:1px solid var(--line);color:var(--mu);white-space:nowrap}
+.chip.live{color:var(--ok);border-color:rgba(62,224,143,.4)}.chip.wait{color:var(--warn);border-color:rgba(255,181,71,.4)}.chip.off{color:var(--bad);border-color:rgba(255,93,108,.4)}
+.mu{color:var(--mu);font-size:12.5px}
+.num{font:600 24px/1.1 var(--f-hud);color:var(--ice);font-variant-numeric:tabular-nums;letter-spacing:.02em}
+.num.sm{font-size:18px}
+.lbl{font:500 10px/1.5 var(--f-mono);letter-spacing:.14em;text-transform:uppercase;color:var(--mu)}
+.kv{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.kv3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+.rowx{display:flex;justify-content:space-between;align-items:baseline;gap:10px;padding:8px 0;border-top:1px solid rgba(15,42,66,.7)}
+.rowx:first-child{border-top:0}
+.rowx b{font-weight:600}
+.money{font-family:var(--f-mono);font-variant-numeric:tabular-nums;white-space:nowrap}
+button,.btn{font:600 12px/1 var(--f-hud);letter-spacing:.16em;text-transform:uppercase;color:var(--bg);background:var(--cyan);border:0;padding:12px 14px;cursor:pointer;text-decoration:none;display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:42px}
+button.ghost,.btn.ghost{background:transparent;color:var(--cyan);border:1px solid var(--cyan-dim)}
+button:focus-visible,.btn:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid var(--ice);outline-offset:2px}
+input,select{width:100%;background:#030b14;color:var(--ice);border:1px solid var(--line);padding:10px 11px;font:15px var(--f-body);min-height:42px}
+.form{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.form .full{grid-column:1/-1}
+/* core */
+.orbwrap{position:relative;display:grid;place-items:center;padding:6px 0 0}
+#orb{width:min(100%,420px);aspect-ratio:1;max-width:100%;display:block}
+.state{font:600 12px/1 var(--f-hud);letter-spacing:.32em;text-transform:uppercase;color:var(--cyan);text-align:center;margin-top:-4px}
+.say{min-height:3.2em;text-align:center;font-size:15px;color:var(--ice);margin:10px auto 0;max-width:46ch;text-wrap:balance}
+.heard{text-align:center;font:12px var(--f-mono);color:var(--mu);min-height:1.4em}
+.ask{display:flex;gap:8px;margin-top:12px}
+.mic{width:64px;height:64px;border-radius:50%;padding:0;flex:none;background:radial-gradient(circle,#0e3b5a,#041420);border:1px solid var(--cyan);color:var(--cyan);box-shadow:0 0 18px rgba(41,200,255,.35)}
+.mic.on{background:radial-gradient(circle,var(--cyan),#0a4f75);color:var(--bg);box-shadow:0 0 28px var(--cyan)}
+.ask form{flex:1;display:flex;gap:8px;min-width:0}
+.hint{margin-top:10px;display:flex;flex-wrap:wrap;gap:6px;justify-content:center}
+.hint button{min-height:32px;padding:8px 10px;font-size:10px}
+/* wind chart */
+.bars{display:grid;grid-template-columns:repeat(13,1fr);gap:3px;align-items:end;height:74px;margin-top:8px}
+.bars i{display:block;background:linear-gradient(180deg,var(--cyan),rgba(41,200,255,.18));min-height:2px;position:relative}
+.bars i.k{background:linear-gradient(180deg,var(--ok),rgba(62,224,143,.2))}
+.bars i.x{background:linear-gradient(180deg,var(--warn),rgba(255,181,71,.2))}
+.hrs{display:grid;grid-template-columns:repeat(13,1fr);gap:3px;font:9px var(--f-mono);color:var(--mu);text-align:center;margin-top:3px}
+.verdict{font:600 13px var(--f-hud);letter-spacing:.12em;text-transform:uppercase}
+.list{display:flex;flex-direction:column}
+.wash{padding:9px 0;border-top:1px solid rgba(15,42,66,.7)}.wash:first-child{border-top:0}
+.wash b{font-family:var(--f-mono);color:var(--cyan);margin-right:6px}
+.todo{border-left:2px solid var(--warn);padding:6px 0 6px 10px;margin:6px 0;color:var(--mu);font-size:12.5px}
+/* alarm overlay */
+#wake{position:fixed;inset:0;z-index:50;background:radial-gradient(circle at 50% 40%,rgba(41,200,255,.25),transparent 60%),var(--bg);display:grid;place-items:center;text-align:center;padding:24px}
+#wake h1{font:700 clamp(28px,7vw,54px)/1.05 var(--f-hud);letter-spacing:.08em;color:var(--ice);margin:0 0 12px;text-shadow:0 0 24px var(--cyan)}
+#wake p{color:var(--mu);max-width:40ch;margin:0 auto 22px;font-size:16px}
+#wake[hidden],#night[hidden],.toast[hidden]{display:none}
+#night{position:fixed;inset:0;z-index:45;background:#000;display:grid;place-items:center;text-align:center;cursor:none}
+#night:hover{cursor:default}
+#nClk{font:600 clamp(60px,14vw,160px)/1 var(--f-hud);color:#0b3a55;letter-spacing:.04em;font-variant-numeric:tabular-nums}
+#night .lbl{color:#0b3a55}#night button{opacity:.35}
+#code{font:700 clamp(48px,10vw,96px)/1 var(--f-mono);letter-spacing:.25em;color:var(--cyan);text-shadow:0 0 24px var(--cyan);margin-top:6px}
+#ytBox{position:fixed;width:1px;height:1px;left:-10px;bottom:0;overflow:hidden;opacity:0;pointer-events:none}
+.toast{position:fixed;left:50%;bottom:calc(18px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);background:var(--panel);border:1px solid var(--cyan-dim);padding:10px 14px;font-size:13px;z-index:60;max-width:calc(100% - 32px)}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+</style></head><body>
+
+<header>
+  <div class="brand">J.A.R.V.I.S<small>LANGEBAAN · HAYDEN'S SYSTEMS</small></div>
+  <div class="clock"><b id="clk">--:--</b><span id="dte"></span></div>
+</header>
+
+<div class="grid">
+  <!-- LEFT: day intel -->
+  <section class="col">
+    <div class="panel" id="pWake">
+      <div class="ph"><h2>Wake-up protocol</h2><span class="chip off" id="alarmChip">Not armed</span></div>
+      <div class="kv">
+        <div><div class="lbl">Alarm</div><input id="alarmT" type="time" value="06:00" aria-label="Alarm time"></div>
+        <div><div class="lbl">Wake song</div><div class="num sm" style="margin-top:8px">Easy Lover</div></div>
+        <div class="full" style="grid-column:1/-1"><div class="lbl">YouTube link for the song</div><input id="songU" placeholder="https://www.youtube.com/watch?v=..." aria-label="YouTube link for the wake song"></div>
+      </div>
+      <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap">
+        <button id="armBtn">Arm alarm for tonight</button>
+        <button class="ghost" id="testBtn">Test alarm</button>
+        <button class="ghost" id="morningBtn">Briefing</button>
+      </div>
+      <div class="mu" style="margin-top:10px">Before bed: laptop plugged in, volume up, tap Arm. The screen goes dark and stays awake. At alarm time Easy Lover plays full blast and only stops when you walk over and type the code on screen.</div>
+    </div>
+
+    <div class="panel">
+      <div class="ph"><h2>Weather · Wind</h2><span class="chip wait" id="wxChip">Loading</span></div>
+      <div class="kv3">
+        <div><div class="lbl">Now</div><div class="num" id="wxT">--°</div><div class="mu" id="wxD">—</div></div>
+        <div><div class="lbl">Wind</div><div class="num" id="wxW">-- kn</div><div class="mu" id="wxDir">—</div></div>
+        <div><div class="lbl">Gusts</div><div class="num" id="wxG">-- kn</div><div class="mu" id="wxHL">—</div></div>
+      </div>
+      <div class="bars" id="bars" aria-label="Hourly wind in knots, 07:00 to 19:00"></div>
+      <div class="hrs" id="hrs"></div>
+      <div class="rowx" style="margin-top:6px"><span class="lbl">Kite call</span><span class="verdict" id="kite">—</span></div>
+    </div>
+
+    <div class="panel">
+      <div class="ph"><h2>Today's schedule</h2><span class="chip" id="schChip">Sleek Auto</span></div>
+      <div class="lbl">Sleek Auto washes</div>
+      <div class="list" id="washList"><div class="mu">Sign in to Sleek Auto (right panel) to load your washes.</div></div>
+      <div class="lbl" style="margin-top:12px">Kite lessons · TideForce</div>
+      <div class="todo">Phase 2: Jarvis reads your lessons under "Hayden" on capesports.tideforce.app.</div>
+      <a class="mu" href="https://capesports.tideforce.app/login" target="_blank" rel="noopener">Open TideForce →</a>
+    </div>
+
+    <div class="panel">
+      <div class="ph"><h2>Inbox triage</h2><span class="chip wait">Phase 2</span></div>
+      <div class="todo">Jarvis will sort your Gmail into "answer", "pay" and "ignore" once Gmail is connected.</div>
+    </div>
+  </section>
+
+  <!-- CENTRE: the core -->
+  <section class="col core">
+    <div class="panel" style="padding-bottom:18px">
+      <div class="orbwrap"><canvas id="orb" width="840" height="840" aria-label="Jarvis core"></canvas></div>
+      <div class="state" id="state">Online</div>
+      <div class="say" id="say">Good day, Hayden. All systems online.</div>
+      <div class="heard" id="heard"></div>
+      <div class="ask">
+        <button class="mic" id="mic" aria-label="Talk to Jarvis"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg></button>
+        <form id="askF"><input id="askI" placeholder="Type a command…" autocomplete="off" aria-label="Command"><button type="submit">Go</button></form>
+      </div>
+      <div class="hint">
+        <button class="ghost" data-q="good morning">Good morning</button>
+        <button class="ghost" data-q="what's the wind">Wind</button>
+        <button class="ghost" data-q="what's on today">Today</button>
+        <button class="ghost" data-q="how much did I make this month">Income</button>
+        <button class="ghost" data-q="book a wash for Mike tomorrow at 2pm">Book a wash</button>
+      </div>
+    </div>
+
+    <div class="panel" id="bookP">
+      <div class="ph"><h2>Book a wash · Sleek Auto</h2><span class="chip" id="bookChip">Locked</span></div>
+      <form class="form" id="bookF">
+        <input id="bCl" placeholder="Client name" class="full">
+        <input id="bPh" type="tel" placeholder="Client phone">
+        <input id="bAd" placeholder="Address">
+        <input id="bDt" type="date">
+        <input id="bTm" type="time" value="09:00">
+        <select id="bCrew" class="full"><option value="festus">Festus</option><option value="mateo">Mateo</option><option value="festus,mateo">Festus + Mateo</option></select>
+        <select id="bSv"></select>
+        <select id="bCar"></select>
+        <button type="submit" class="full">Confirm booking</button>
+      </form>
+      <div class="mu" id="bookMsg" style="margin-top:8px">Jarvis fills this in from your voice. Nothing is booked until you tap Confirm.</div>
+    </div>
+  </section>
+
+  <!-- RIGHT: money + social -->
+  <section class="col">
+    <div class="panel">
+      <div class="ph"><h2>Net worth</h2><span class="chip wait">Later</span></div>
+      <div class="lbl">Total assets</div>
+      <div class="num" style="font-size:32px">R —</div>
+      <div class="mu">We'll connect your accounts when you're ready.</div>
+    </div>
+
+    <div class="panel">
+      <div class="ph"><h2>Income</h2><span class="chip" id="incChip"></span></div>
+      <div class="kv">
+        <div><div class="lbl">Today</div><div class="num" id="incDay">R0</div></div>
+        <div><div class="lbl">This month</div><div class="num" id="incMon">R0</div></div>
+      </div>
+      <div style="margin-top:10px">
+        <div class="rowx"><span>Sleek Auto <span class="mu">· your 50%</span></span><span class="money" id="mSleek">—</span></div>
+        <div class="rowx"><span>Kitesurfing <span class="mu">· EFT</span></span><span class="money" id="mKite">R0.00</span></div>
+        <div class="rowx"><span>niche.co <span class="mu">· Shopify</span></span><span class="money mu">Phase 3</span></div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="ph"><h2>Sleek Auto link</h2><span class="chip off" id="saChip">Signed out</span></div>
+      <div id="saBox">
+        <form class="form" id="saF">
+          <input id="saN" placeholder="Sleek Auto name" autocapitalize="none" autocomplete="username" class="full">
+          <input id="saP" type="password" placeholder="Password" autocomplete="current-password" class="full">
+          <button type="submit" class="full">Connect Sleek Auto</button>
+        </form>
+        <div class="mu" id="saMsg" style="margin-top:6px">Same login as the Sleek Auto app.</div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="ph"><h2>Log kite EFT</h2><span class="chip">This phone</span></div>
+      <form class="form" id="kF">
+        <input id="kA" type="number" min="0" step="1" placeholder="Amount (R)">
+        <input id="kD" type="date">
+        <input id="kN" placeholder="Note, e.g. 2h lesson – Sam" class="full">
+        <button type="submit" class="full">Add payment</button>
+      </form>
+      <div class="list" id="kList" style="margin-top:8px"></div>
+    </div>
+
+    <div class="panel">
+      <div class="ph"><h2>niche.co · Social</h2><span class="chip wait">Phase 4</span></div>
+      <div class="kv">
+        <div><div class="lbl">TikTok</div><div class="num sm">—</div><div class="mu">followers · views</div></div>
+        <div><div class="lbl">Instagram</div><div class="num sm">—</div><div class="mu">followers · reach</div></div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="ph"><h2>WhatsApp bookings</h2><span class="chip wait">Phase 5</span></div>
+      <div class="todo">Clients message 066 105 8194, Jarvis offers a slot, books it here and confirms on WhatsApp.</div>
+    </div>
+  </section>
+</div>
+
+<div id="night" hidden>
+  <div>
+    <div id="nClk">--:--</div>
+    <div class="lbl" id="nInfo">Alarm armed</div>
+    <button class="ghost" id="disarmBtn" style="margin-top:28px">Disarm</button>
+  </div>
+</div>
+<div id="wake" hidden>
+  <div>
+    <h1 id="wakeH">Good morning, Hayden</h1>
+    <p id="wakeP"></p>
+    <div class="lbl">Type this code to stop the music</div>
+    <div id="code">0000</div>
+    <form id="codeF" style="display:flex;gap:8px;max-width:320px;margin:14px auto 0"><input id="codeI" inputmode="numeric" autocomplete="off" maxlength="4" aria-label="Wake code" style="text-align:center;font:600 22px var(--f-mono);letter-spacing:.3em"><button type="submit">Stop</button></form>
+    <div class="mu" id="codeMsg" style="margin-top:10px"></div>
+  </div>
+</div>
+<div id="ytBox" aria-hidden="true"><div id="yt"></div></div>
+<div class="toast" id="toast" hidden></div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
+<script>
+/* ===== config ===== */
+const LAT=-33.0917, LON=18.0333, TZ="Africa/Johannesburg", NAME="Hayden";
+const SONG="https://music.youtube.com/search?q=Easy+Lover+Philip+Bailey+Phil+Collins";
+const SUPABASE_URL="https://oorqygvsnbeshspqqfaz.supabase.co",SUPABASE_KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9vcnF5Z3ZzbmJlc2hzcHFxZmF6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTIzMzgzNjMsImV4cCI6MjEwNzkxNDM2M30.fi6dp75NC0hxwR1e_i1JD7SSUXxoXGdq9kewOC8R7wM";
+/* Sleek Auto price list (kept in sync with the Sleek Auto app) */
+const CARS={"2-Door Sedan":[80,40],"4-Door Sedan":[90,50],"4-Door SUV":[100,50],"Single-Cab Bakkie":[120,50,0,160],"Double-Cab Bakkie":[120,50],"Minivan":[130,60],"Van":[140,70],"Motorbike":[100,0,70]};
+const CH="Exterior + Chain clean & lube",SVC=["Exterior + Interior","Exterior","Interior",CH],STAFF={festus:"Festus",mateo:"Mateo"};
+const P=(c,s)=>{const a=CARS[c];return !a?0:s===CH?a[0]+(a[2]||0):s==="Exterior"?a[0]:s==="Interior"?a[1]:(a[3]||a[0]+a[1])};
+const okCar=(c,s)=>s===CH?c==="Motorbike":(/Interior/.test(s)?c!=="Motorbike":true);
+
+/* ===== helpers ===== */
+const $=s=>document.querySelector(s);
+const esc=s=>String(s??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const R=n=>"R"+Math.round(+n||0).toLocaleString("en-ZA");
+const R2=n=>"R"+(+n||0).toFixed(2);
+const ld=(d=new Date())=>{const z=new Date(d.toLocaleString("en-US",{timeZone:TZ}));return z.getFullYear()+"-"+String(z.getMonth()+1).padStart(2,"0")+"-"+String(z.getDate()).padStart(2,"0")};
+const addDays=(n)=>{const d=new Date();d.setDate(d.getDate()+n);return ld(d)};
+const store={get(k,d){try{const v=localStorage.getItem("jv_"+k);return v==null?d:JSON.parse(v)}catch(e){return d}},set(k,v){try{localStorage.setItem("jv_"+k,JSON.stringify(v))}catch(e){}}};
+function toast(t){const e=$("#toast");e.textContent=t;e.hidden=false;clearTimeout(toast.t);toast.t=setTimeout(()=>e.hidden=true,4000)}
+
+/* ===== voice out ===== */
+let voice=null,mode="idle";
+function pickVoice(){const v=speechSynthesis.getVoices();voice=v.find(x=>/en-GB/i.test(x.lang)&&/male|daniel|george|arthur/i.test(x.name))||v.find(x=>/en-GB/i.test(x.lang))||v.find(x=>/^en/i.test(x.lang))||null}
+if("speechSynthesis" in window){pickVoice();speechSynthesis.onvoiceschanged=pickVoice}
+function say(text){
+  $("#say").textContent=text;
+  if(!("speechSynthesis" in window))return Promise.resolve();
+  return new Promise(res=>{speechSynthesis.cancel();const u=new SpeechSynthesisUtterance(text);if(voice)u.voice=voice;u.rate=1.02;u.pitch=.9;
+    u.onstart=()=>setMode("speaking");u.onend=u.onerror=()=>{setMode("idle");res()};speechSynthesis.speak(u)});
+}
+function setMode(m){mode=m;$("#state").textContent={idle:"Online",listening:"Listening",speaking:"Speaking",thinking:"Processing"}[m]||m;$("#mic").classList.toggle("on",m==="listening")}
+
+/* ===== voice in ===== */
+const SR=window.SpeechRecognition||window.webkitSpeechRecognition;let rec=null;
+$("#mic").onclick=()=>{
+  if(!SR){toast("Voice input needs Chrome. Type your command instead.");$("#askI").focus();return}
+  if(mode==="listening"){rec&&rec.stop();return}
+  speechSynthesis&&speechSynthesis.cancel();
+  rec=new SR();rec.lang="en-ZA";rec.interimResults=true;rec.maxAlternatives=1;
+  rec.onstart=()=>setMode("listening");
+  rec.onresult=e=>{const t=[...e.results].map(r=>r[0].transcript).join(" ");$("#heard").textContent="“"+t+"”";if(e.results[e.results.length-1].isFinal)handle(t)};
+  rec.onerror=e=>{setMode("idle");if(e.error==="not-allowed")toast("Allow the microphone for Jarvis in Chrome settings.")};
+  rec.onend=()=>{if(mode==="listening")setMode("idle")};
+  rec.start();
+};
+$("#askF").onsubmit=e=>{e.preventDefault();const t=$("#askI").value.trim();if(!t)return;$("#heard").textContent="“"+t+"”";$("#askI").value="";handle(t)};
+document.querySelectorAll(".hint button").forEach(b=>b.onclick=()=>{$("#heard").textContent="“"+b.dataset.q+"”";handle(b.dataset.q)});
+
+/* ===== brain (rule-based until the AI brain is connected) ===== */
+function handle(raw){
+  const t=raw.toLowerCase();
+  if(/\b(book|schedule)\b/.test(t))return cmdBook(raw);
+  if(/good morning|briefing|wake/.test(t))return briefing();
+  if(/wind|weather|kite|rain|temperature|hot|cold/.test(t))return say(wxSpeech());
+  if(/easy lover|music|song|play/.test(t)){say("Playing Easy Lover.");return openSong()}
+  if(/money|income|made|earn|revenue|profit/.test(t))return say(incomeSpeech());
+  if(/today|schedule|wash|booking|on for|calendar/.test(t))return say(todaySpeech());
+  if(/\btime\b/.test(t))return say("It's "+new Date().toLocaleTimeString("en-ZA",{hour:"2-digit",minute:"2-digit",timeZone:TZ})+".");
+  if(/thank/.test(t))return say("Always, sir.");
+  return say("I can't do that one yet. Right now I handle the weather, your schedule, income, bookings and your wake-up. More is coming.");
+}
+function openSong(){const w=window.open(SONG,"_blank");if(!w)location.href=SONG}
+
+/* ===== booking from voice ===== */
+const DAYS=["sunday","monday","tuesday","wednesday","thursday","friday","saturday"];
+function parseWhen(t){
+  let date=null,time=null;const s=t.toLowerCase();
+  if(/\btoday\b/.test(s))date=addDays(0);else if(/\btomorrow\b/.test(s))date=addDays(1);
+  else{const d=DAYS.findIndex(x=>s.includes(x));if(d>=0){const now=new Date(new Date().toLocaleString("en-US",{timeZone:TZ})).getDay();let diff=(d-now+7)%7;if(diff===0)diff=7;date=addDays(diff)}}
+  const pats=[/\b(\d{1,2})(?:[:h.](\d{2}))?\s*(am|pm|a\.m\.|p\.m\.)/,/\bat\s+(\d{1,2})(?:[:h.](\d{2}))?\b(?!\s*[a-z]{3,})/,/\b(\d{1,2})[:h](\d{2})\b/];
+  for(const p of pats){const m=s.match(p);if(!m)continue;let h=+m[1],mi=+(m[2]||0);const ap=(m[3]||"").replace(/\./g,"");if(ap==="pm"&&h<12)h+=12;if(ap==="am"&&h===12)h=0;if(!ap&&h>=1&&h<=6)h+=12;if(h<24&&mi<60){time=String(h).padStart(2,"0")+":"+String(mi).padStart(2,"0");break}}
+  return{date,time};
+}
+function cmdBook(raw){
+  const name=(raw.match(/\bfor\s+([A-Za-z][A-Za-z'-]*(?:\s+[A-Z][A-Za-z'-]*)?)/)||raw.match(/\b(?:[Bb]ook|[Ss]chedule)\s+(?!a\b|an\b|the\b|in\b)([A-Z][A-Za-z'-]*(?:\s+[A-Z][A-Za-z'-]*)?)/)||[])[1];
+  const phone=(raw.replace(/\s/g,"").match(/(\+27|0)\d{9}/)||[])[0];
+  const addr=(raw.match(/\b(?:at|in)\s+(\d+\s+(?!am\b|pm\b|o'?clock\b)[A-Za-z]{2,}.*?)(?=\s+(?:on|at|tomorrow|today|monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b|$)/i)||[])[1];
+  const{date,time}=parseWhen(raw.replace(/\d{9,}/g,""));
+  const bad=/^(tomorrow|today|monday|tuesday|wednesday|thursday|friday|saturday|sunday)$/i;
+  const nm=(name||"").split(" ").filter(w=>!bad.test(w)).join(" ");
+  if(nm)$("#bCl").value=nm.replace(/\b\w/g,c=>c.toUpperCase());
+  if(phone)$("#bPh").value=phone;if(addr)$("#bAd").value=addr.replace(/\s*(\+27|0)[\d\s]{9,}$/,"").trim();if(date)$("#bDt").value=date;if(time)$("#bTm").value=time;
+  $("#bookP").scrollIntoView({behavior:"smooth",block:"center"});
+  const missing=[!$("#bCl").value&&"the client's name",!$("#bAd").value&&"the address",!$("#bPh").value&&"a phone number"].filter(Boolean);
+  const when=$("#bDt").value?new Date($("#bDt").value+"T12:00").toLocaleDateString("en-ZA",{weekday:"long",day:"numeric",month:"long"}):"";
+  say("Booking drafted"+($("#bCl").value?" for "+$("#bCl").value:"")+(when?" on "+when:"")+" at "+$("#bTm").value+". "+(missing.length?"I still need "+missing.join(" and ")+". ":"")+"Check it and tap confirm.");
+}
+
+/* ===== Sleek Auto ===== */
+let sb=null,washes=[],bons=[],saOn=false;
+try{sb=supabase.createClient(SUPABASE_URL,SUPABASE_KEY)}catch(e){}
+function fillSvc(){$("#bSv").innerHTML=SVC.map(s=>`<option>${s}</option>`).join("");fillCar()}
+function fillCar(){const s=$("#bSv").value,cur=$("#bCar").value;$("#bCar").innerHTML='<option value="">Car type (crew can set later)</option>'+Object.keys(CARS).filter(c=>okCar(c,s)).map(c=>`<option value="${c}" ${c===cur?"selected":""}>${c} (${R2(P(c,s))})</option>`).join("")}
+$("#bSv").onchange=fillCar;
+async function saBoot(){
+  if(!sb){$("#saMsg").textContent="Couldn't reach Sleek Auto. Check your connection.";return}
+  const{data:{session}}=await sb.auth.getSession();if(session)saEnter(session.user.id);
+}
+$("#saF").onsubmit=async e=>{e.preventDefault();if(!sb)return;$("#saMsg").textContent="Connecting…";
+  const{data,error}=await sb.auth.signInWithPassword({email:$("#saN").value.trim().toLowerCase()+"@sleekauto.app",password:$("#saP").value});
+  if(error){$("#saMsg").textContent="Wrong name or password.";return}saEnter(data.user.id)};
+async function saEnter(uid){
+  const{data:p}=await sb.from("profiles").select("*").eq("id",uid).single();
+  if(!p){$("#saMsg").textContent="No Sleek Auto profile for this login.";return}
+  if(p.role!=="owner"){$("#saMsg").textContent="Jarvis needs the owner login.";return}
+  saOn=true;$("#saChip").textContent="Live";$("#saChip").className="chip live";$("#bookChip").textContent="Ready";$("#bookChip").className="chip live";
+  $("#saBox").innerHTML=`<div class="mu">Connected as ${esc(p.name)}. Jarvis reads and books washes live.</div><button class="ghost" style="margin-top:10px" id="saOut">Disconnect</button>`;
+  $("#saOut").onclick=async()=>{await sb.auth.signOut();location.reload()};
+  await saLoad();
+  sb.channel("jarvis").on("postgres_changes",{event:"*",schema:"public",table:"washes"},saLoad).on("postgres_changes",{event:"*",schema:"public",table:"bonuses"},saLoad).subscribe();
+}
+async function saLoad(){
+  const[a,b]=await Promise.all([sb.from("washes").select("*"),sb.from("bonuses").select("*")]);
+  if(a.error){$("#saChip").textContent="Offline";$("#saChip").className="chip off";return}
+  washes=a.data||[];bons=b.data||[];renderWashes();renderIncome();
+}
+function renderWashes(){
+  if(!saOn)return;const td=ld(),list=washes.filter(w=>w.date===td).sort((x,y)=>(x.time||"").localeCompare(y.time||""));
+  const next=washes.filter(w=>w.date>td&&!w.done).sort((x,y)=>(x.date+x.time).localeCompare(y.date+y.time))[0];
+  $("#schChip").textContent=list.length+" today";
+  $("#washList").innerHTML=(list.map(w=>`<div class="wash"><b>${esc(w.time)}</b>${esc(w.client||"Client")} · ${esc(w.address)}<div class="mu">${(w.crew||[]).map(k=>STAFF[k]||k).join(" + ")}${w.car?" · "+esc(w.car)+" · "+R2(w.price):""} · ${w.done?"Done":"Scheduled"}</div></div>`).join("")||'<div class="mu">No washes today.</div>')
+    +(next?`<div class="mu" style="margin-top:6px">Next: ${esc(next.date)} ${esc(next.time)} · ${esc(next.client||"Client")}</div>`:"");
+}
+$("#bookF").onsubmit=async e=>{e.preventDefault();
+  if(!saOn){$("#bookMsg").textContent="Connect Sleek Auto first (right side).";return}
+  const v=id=>$(id).value.trim();if(!v("#bAd")||!v("#bDt")){$("#bookMsg").textContent="Add an address and a date.";return}
+  const car=v("#bCar"),svc=v("#bSv");
+  const{error}=await sb.from("washes").insert({client:v("#bCl"),phone:v("#bPh"),address:v("#bAd"),date:v("#bDt"),time:v("#bTm"),crew:v("#bCrew").split(","),car,svc,price:car?P(car,svc):0});
+  if(error){$("#bookMsg").textContent="Couldn't book: "+error.message;return}
+  const who=v("#bCl")||"the client";$("#bookF").reset();$("#bDt").value=ld();fillSvc();
+  $("#bookMsg").textContent="Booked. It's in the Sleek Auto calendar now.";say("Done. "+who+" is booked in Sleek Auto.");saLoad();
+};
+
+/* ===== income ===== */
+let kite=store.get("kite",[]);
+function sleekShare(prefix){const ms=washes.filter(w=>w.done&&(w.date||"").startsWith(prefix)),rev=ms.reduce((s,w)=>s+(+w.price||0),0),bn=bons.filter(b=>(b.bonus_date||"").startsWith(prefix)).reduce((s,b)=>s+ +b.amount,0);return{rev,mine:rev*.5-bn,n:ms.length}}
+function kiteSum(prefix){return kite.filter(k=>k.d.startsWith(prefix)).reduce((s,k)=>s+ +k.a,0)}
+function renderIncome(){
+  const td=ld(),mo=td.slice(0,7);const sd=saOn?sleekShare(td).mine:0,sm=saOn?sleekShare(mo):null;
+  $("#mSleek").textContent=saOn?R2(sm.mine):"Sign in";$("#mKite").textContent=R2(kiteSum(mo));
+  $("#incDay").textContent=R(sd+kiteSum(td));$("#incMon").textContent=R((sm?sm.mine:0)+kiteSum(mo));
+  $("#incChip").textContent=new Date().toLocaleDateString("en-ZA",{month:"long",timeZone:TZ});
+  $("#kList").innerHTML=kite.filter(k=>k.d.startsWith(mo)).sort((a,b)=>b.d.localeCompare(a.d)).slice(0,6).map((k,i)=>`<div class="rowx"><span>${esc(k.n||"Kite payment")} <span class="mu">· ${esc(k.d)}</span></span><span class="money">${R2(k.a)} <button class="ghost" style="min-height:26px;padding:4px 7px;font-size:9px;margin-left:6px" data-del="${k.id}" aria-label="Remove payment">✕</button></span></div>`).join("");
+  document.querySelectorAll("[data-del]").forEach(b=>b.onclick=()=>{kite=kite.filter(k=>k.id!==b.dataset.del);store.set("kite",kite);renderIncome()});
+}
+$("#kF").onsubmit=e=>{e.preventDefault();const a=+$("#kA").value;if(!(a>0))return toast("Enter an amount.");kite.push({id:Date.now().toString(36),a,d:$("#kD").value||ld(),n:$("#kN").value.trim()});store.set("kite",kite);$("#kA").value="";$("#kN").value="";renderIncome();toast("Kite payment logged.")};
+function incomeSpeech(){const mo=ld().slice(0,7),k=kiteSum(mo);if(!saOn)return "Kitesurfing has brought in "+R(k)+" this month. Connect Sleek Auto and I'll add the washes.";const s=sleekShare(mo);return "This month: Sleek Auto did "+R(s.rev)+" from "+s.n+" washes, your share is "+R(s.mine)+". Kitesurfing adds "+R(k)+". Total "+R(s.mine+k)+"."}
+function todaySpeech(){if(!saOn)return "Connect Sleek Auto and I'll read out today's washes. TideForce lessons come in the next phase.";const l=washes.filter(w=>w.date===ld()&&!w.done).sort((x,y)=>(x.time||"").localeCompare(y.time||""));return l.length?"You have "+l.length+" wash"+(l.length>1?"es":"")+" today. "+l.map(w=>w.time+", "+(w.client||"a client")+" at "+w.address).join(". ")+".":"No washes booked for today."}
+
+/* ===== weather ===== */
+let wx=null;const WMO={0:"Clear",1:"Mostly clear",2:"Partly cloudy",3:"Overcast",45:"Fog",48:"Fog",51:"Light drizzle",53:"Drizzle",55:"Heavy drizzle",61:"Light rain",63:"Rain",65:"Heavy rain",80:"Showers",81:"Showers",82:"Heavy showers",95:"Thunderstorm"};
+const compass=d=>["N","NNE","NE","ENE","E","ESE","SE","SSE","S","SSW","SW","WSW","W","WNW","NW","NNW"][Math.round(d/22.5)%16];
+const kiteCall=k=>k<12?["Too light · foil only","var(--mu)"]:k<18?["Rideable · big kite","var(--cyan)"]:k<28?["Kite on · go ride","var(--ok)"]:k<35?["Pumping · small kite","var(--warn)"]:["Nuking · careful","var(--bad)"];
+async function loadWx(){
+  try{
+    const u=`https://api.open-meteo.com/v1/forecast?latitude=${LAT}&longitude=${LON}&timezone=${encodeURIComponent(TZ)}&wind_speed_unit=kn&forecast_days=1&current=temperature_2m,apparent_temperature,weather_code,wind_speed_10m,wind_direction_10m,wind_gusts_10m&hourly=wind_speed_10m,wind_gusts_10m&daily=temperature_2m_max,temperature_2m_min,precipitation_probability_max`;
+    const r=await fetch(u);if(!r.ok)throw 0;wx=await r.json();renderWx();store.set("wx",{t:Date.now(),wx});
+  }catch(e){const c=store.get("wx",null);if(c){wx=c.wx;renderWx();$("#wxChip").textContent="Cached";$("#wxChip").className="chip wait"}else{$("#wxChip").textContent="Offline";$("#wxChip").className="chip off"}}
+}
+function renderWx(){
+  const c=wx.current,d=wx.daily;$("#wxT").textContent=Math.round(c.temperature_2m)+"°";$("#wxD").textContent=WMO[c.weather_code]||"—";
+  $("#wxW").textContent=Math.round(c.wind_speed_10m)+" kn";$("#wxDir").textContent=compass(c.wind_direction_10m)+" · "+Math.round(c.wind_direction_10m)+"°";
+  $("#wxG").textContent=Math.round(c.wind_gusts_10m)+" kn";$("#wxHL").textContent=Math.round(d.temperature_2m_min[0])+"° / "+Math.round(d.temperature_2m_max[0])+"°";
+  const hs=wx.hourly.wind_speed_10m.slice(7,20),mx=Math.max(35,...hs);
+  $("#bars").innerHTML=hs.map((k,i)=>`<i class="${k>=18&&k<28?"k":k>=28?"x":""}" style="height:${Math.max(3,k/mx*100)}%" title="${String(i+7).padStart(2,"0")}:00 · ${Math.round(k)} kn"></i>`).join("");
+  $("#hrs").innerHTML=hs.map((k,i)=>`<span>${i%2?"":(i+7)}</span>`).join("");
+  const peak=Math.max(...hs),[txt,col]=kiteCall(peak);$("#kite").textContent=txt+" · peak "+Math.round(peak)+" kn";$("#kite").style.color=col;
+  $("#wxChip").textContent="Live";$("#wxChip").className="chip live";
+}
+function wxSpeech(){if(!wx)return "I can't reach the weather service right now.";const c=wx.current,d=wx.daily,hs=wx.hourly.wind_speed_10m.slice(7,20),peak=Math.max(...hs),pk=hs.indexOf(peak)+7;
+  return `Langebaan is ${Math.round(c.temperature_2m)} degrees and ${(WMO[c.weather_code]||"").toLowerCase()}, heading for ${Math.round(d.temperature_2m_max[0])}. Wind is ${Math.round(c.wind_speed_10m)} knots from the ${compass(c.wind_direction_10m)}, peaking around ${Math.round(peak)} knots at ${pk} o'clock. ${kiteCall(peak)[0].split(" · ")[0]}.`+(d.precipitation_probability_max[0]>40?` ${d.precipitation_probability_max[0]} percent chance of rain.`:"")}
+
+/* ===== morning ===== */
+const WAKE=["Rise and shine, Hayden. The empire doesn't build itself.","Good morning, sir. Systems are online and the wind is waiting.","Wake up, Hayden. Three businesses, one legend. Let's go.","Morning, boss. Coffee first, then we take over the day.","Up and at it, Hayden. Today's a good day to stack wins."];
+async function briefing(){
+  const line=WAKE[Math.floor(Math.random()*WAKE.length)];
+  await say(line);await say(wxSpeech());await say(todaySpeech());
+  await say("Emails and lessons come online in the next upgrade.");
+}
+$("#morningBtn").onclick=briefing;
+/* ===== laptop alarm ===== */
+const DEFAULT_SONG="https://www.youtube.com/watch?v=JkRKT6T0QLg";
+let armed=false,ringing=false,player=null,ytReady=false,actx=null,beepT=null,rampT=null,wl=null,code="";
+$("#alarmT").value=store.get("alarm","06:00");$("#alarmT").onchange=()=>{store.set("alarm",$("#alarmT").value);store.set("fired","");updArm();toast("Alarm set for "+$("#alarmT").value+".")};
+$("#songU").value=store.get("song",DEFAULT_SONG);$("#songU").onchange=()=>{store.set("song",$("#songU").value.trim()||DEFAULT_SONG);player=null;loadYT();toast("Wake song saved.")};
+const vid=u=>{const m=String(u).match(/(?:v=|youtu\.be\/|embed\/|shorts\/)([\w-]{11})/);return m?m[1]:"JkRKT6T0QLg"};
+function loadYT(){
+  if(window.YT&&YT.Player){makePlayer();return}
+  if(!document.getElementById("ytApi")){const t=document.createElement("script");t.id="ytApi";t.src="https://www.youtube.com/iframe_api";document.head.appendChild(t)}
+  window.onYouTubeIframeAPIReady=makePlayer;
+}
+function makePlayer(){
+  if(player){try{player.destroy()}catch(e){}}
+  $("#ytBox").innerHTML='<div id="yt"></div>';ytReady=false;
+  const id=vid(store.get("song",DEFAULT_SONG));
+  player=new YT.Player("yt",{width:200,height:120,videoId:id,playerVars:{autoplay:0,controls:0,playsinline:1,loop:1,playlist:id},
+    events:{onReady:()=>{ytReady=true},onError:()=>{ytReady=false;if(ringing)beep()},onStateChange:e=>{if(e.data===0&&ringing)player.playVideo()}}});
+}
+function unlockAudio(){try{actx=actx||new (window.AudioContext||window.webkitAudioContext)();actx.resume()}catch(e){}if(ytReady){player.mute();player.playVideo();setTimeout(()=>{try{player.pauseVideo();player.seekTo(0);player.unMute()}catch(e){}},400)}}
+async function keepAwake(){try{if(navigator.wakeLock)wl=await navigator.wakeLock.request("screen")}catch(e){}}
+document.addEventListener("visibilitychange",()=>{if(document.visibilityState==="visible"&&(armed||ringing))keepAwake()});
+function alarmAt(){const[h,m]=$("#alarmT").value.split(":").map(Number);return h*60+m}
+function nowMin(){const n=new Date(new Date().toLocaleString("en-US",{timeZone:TZ}));return n.getHours()*60+n.getMinutes()}
+function updArm(){$("#alarmChip").textContent=armed?"Armed · "+$("#alarmT").value:"Not armed";$("#alarmChip").className="chip "+(armed?"live":"off");$("#armBtn").textContent=armed?"Show night screen":"Arm alarm for tonight";$("#nInfo").textContent="Alarm armed · "+$("#alarmT").value+" · Easy Lover"}
+$("#armBtn").onclick=()=>{unlockAudio();keepAwake();armed=true;store.set("fired","");updArm();$("#night").hidden=false;try{document.documentElement.requestFullscreen&&document.documentElement.requestFullscreen().catch(()=>{})}catch(e){}
+  say("Alarm armed for "+$("#alarmT").value+". Sleep well, Hayden.")};
+$("#disarmBtn").onclick=()=>{armed=false;$("#night").hidden=true;updArm();try{document.fullscreenElement&&document.exitFullscreen()}catch(e){}toast("Alarm disarmed.")};
+$("#testBtn").onclick=()=>{unlockAudio();ring(true)};
+function beep(){ // loud fallback if the YouTube song can't play
+  if(!actx||beepT)return;const go=()=>{for(let i=0;i<3;i++){const o=actx.createOscillator(),g=actx.createGain();o.type="square";o.frequency.value=880;g.gain.value=.25;o.connect(g).connect(actx.destination);o.start(actx.currentTime+i*.25);o.stop(actx.currentTime+i*.25+.15)}};go();beepT=setInterval(go,1200)}
+function ring(test){
+  if(ringing)return;ringing=true;$("#night").hidden=true;
+  code=String(Math.floor(1000+Math.random()*9000));$("#code").textContent=code;$("#codeI").value="";$("#codeMsg").textContent=test?"Test run. Type the code to stop.":"";
+  $("#wakeP").textContent=WAKE[Math.floor(Math.random()*WAKE.length)];$("#wake").hidden=false;setTimeout(()=>$("#codeI").focus(),50);keepAwake();
+  let started=false;
+  if(ytReady){try{player.unMute();player.setVolume(40);player.seekTo(0);player.playVideo();let v=40;rampT=setInterval(()=>{v=Math.min(100,v+5);try{player.setVolume(v)}catch(e){}if(v>=100)clearInterval(rampT)},4000)}catch(e){}}
+  setTimeout(()=>{try{started=ytReady&&player.getPlayerState()===1}catch(e){}if(!started&&ringing)beep()},5000);
+}
+function stopRing(){ringing=false;clearInterval(rampT);clearInterval(beepT);beepT=null;try{player&&player.pauseVideo()}catch(e){}}
+$("#codeF").onsubmit=async e=>{e.preventDefault();if($("#codeI").value.trim()!==code){$("#codeMsg").textContent="Wrong code. Look closer.";$("#codeI").value="";return}
+  stopRing();armed=false;updArm();$("#wake").hidden=true;try{document.fullscreenElement&&document.exitFullscreen()}catch(e){}
+  await say($("#wakeP").textContent);await say(wxSpeech());await say(todaySpeech());await say("Emails and lessons come online in the next upgrade. Let's get it, Hayden.")};
+function checkAlarm(){
+  if(!armed||ringing)return;const d=nowMin()-alarmAt();
+  if(d>=0&&d<120&&store.get("fired","")!==ld()){store.set("fired",ld());ring(false)}
+  $("#nClk").textContent=new Date().toLocaleTimeString("en-ZA",{hour:"2-digit",minute:"2-digit",timeZone:TZ});
+}
+if(location.hash==="#arm")toast("Tap 'Arm alarm for tonight' to arm.");
+updArm();loadYT();
+
+/* ===== clock ===== */
+function tick(){const n=new Date();$("#clk").textContent=n.toLocaleTimeString("en-ZA",{hour:"2-digit",minute:"2-digit",timeZone:TZ});$("#dte").textContent=n.toLocaleDateString("en-ZA",{weekday:"long",day:"numeric",month:"long",timeZone:TZ});checkAlarm()}
+
+/* ===== core animation ===== */
+(function(){
+  const cv=$("#orb"),x=cv.getContext("2d"),S=cv.width,C=S/2,still=matchMedia("(prefers-reduced-motion: reduce)").matches;let t=0;
+  const glow=(b,c)=>{x.shadowBlur=b;x.shadowColor=c};
+  function arc(r,a0,a1,w,a){x.beginPath();x.arc(C,C,r,a0,a1);x.lineWidth=w;x.strokeStyle=`rgba(41,200,255,${a})`;x.stroke()}
+  function ticks(r,n,len,w,a,rot,skip){for(let i=0;i<n;i++){if(skip&&skip(i))continue;const g=rot+i/n*Math.PI*2;x.beginPath();x.moveTo(C+Math.cos(g)*r,C+Math.sin(g)*r);x.lineTo(C+Math.cos(g)*(r+len),C+Math.sin(g)*(r+len));x.lineWidth=w;x.strokeStyle=`rgba(41,200,255,${a})`;x.stroke()}}
+  function frame(){
+    const sp=mode==="listening"?2.4:mode==="speaking"?1.8:1,pulse=mode==="speaking"?(Math.sin(t*0.35)*.5+.5):mode==="listening"?(Math.sin(t*.18)*.5+.5):(Math.sin(t*.04)*.5+.5);
+    x.clearRect(0,0,S,S);glow(22,"rgba(41,200,255,.9)");
+    // outer crosshair
+    x.lineWidth=3;x.strokeStyle="rgba(41,200,255,.55)";[[-1,0],[1,0],[0,-1],[0,1]].forEach(([a,b])=>{x.beginPath();x.moveTo(C+a*352,C+b*352);x.lineTo(C+a*402,C+b*402);x.stroke()});
+    // outer ring broken
+    const r0=t*.004*sp;for(let i=0;i<4;i++)arc(370,r0+i*Math.PI/2+.12,r0+i*Math.PI/2+Math.PI/2-.12,5,.85);
+    ticks(340,90,10,2,.35,-r0*.7);
+    // mid thick segments
+    const r1=-t*.008*sp;arc(300,r1,r1+Math.PI*1.25,16,.9);arc(300,r1+Math.PI*1.35,r1+Math.PI*1.55,16,.6);arc(300,r1+Math.PI*1.65,r1+Math.PI*1.9,16,.35);
+    arc(276,0,Math.PI*2,2,.5);
+    // equalizer comb
+    const r2=t*.006*sp;glow(10,"rgba(41,200,255,.7)");
+    for(let i=0;i<120;i++){if(i>78&&i<96)continue;const g=r2+i/120*Math.PI*2,amp=(mode==="idle"?10:22)*(.4+.6*Math.abs(Math.sin(i*.7+t*.12*sp)))*(.6+pulse*.6);x.beginPath();x.moveTo(C+Math.cos(g)*214,C+Math.sin(g)*214);x.lineTo(C+Math.cos(g)*(214+18+amp),C+Math.sin(g)*(214+18+amp));x.lineWidth=3;x.strokeStyle=`rgba(41,200,255,${.35+.5*((i%3)/2)})`;x.stroke()}
+    glow(18,"rgba(41,200,255,.9)");
+    arc(196,-r2*1.4,-r2*1.4+Math.PI*1.6,8,.8);
+    ticks(168,60,6,2,.55,r2*2,i=>i%5===0);
+    // inner ring
+    arc(140,0,Math.PI*2,3,.9);
+    // core
+    const g=x.createRadialGradient(C,C,0,C,C,130);g.addColorStop(0,`rgba(217,244,255,${.55+pulse*.4})`);g.addColorStop(.12,`rgba(41,200,255,${.35+pulse*.3})`);g.addColorStop(1,"rgba(41,200,255,0)");
+    x.shadowBlur=0;x.fillStyle=g;x.beginPath();x.arc(C,C,130,0,Math.PI*2);x.fill();
+    t++;if(!still)requestAnimationFrame(frame);
+  }
+  frame();
+})();
+
+/* ===== boot ===== */
+$("#bDt").value=ld();$("#kD").value=ld();fillSvc();renderIncome();tick();setInterval(tick,5000);
+loadWx();setInterval(loadWx,30*60*1000);saBoot();
+const h=new Date(new Date().toLocaleString("en-US",{timeZone:TZ})).getHours();
+$("#say").textContent=(h<12?"Good morning":h<18?"Good afternoon":"Good evening")+", "+NAME+". All systems online.";
+try{navigator.wakeLock&&document.addEventListener("click",()=>navigator.wakeLock.request("screen").catch(()=>{}),{once:true})}catch(e){}
+if("serviceWorker" in navigator)navigator.serviceWorker.register("sw.js").catch(()=>{});
+</script>
+</body></html>
