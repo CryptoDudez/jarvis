@@ -72,6 +72,9 @@ input,select{width:100%;background:#030b14;color:var(--ice);border:1px solid var
 .list{display:flex;flex-direction:column}
 .wash{padding:9px 0;border-top:1px solid rgba(15,42,66,.7)}.wash:first-child{border-top:0}
 .wash b{font-family:var(--f-mono);color:var(--cyan);margin-right:6px}
+.pile{font:600 9px/1 var(--f-mono);letter-spacing:.12em;text-transform:uppercase;padding:3px 6px;border:1px solid currentColor;margin-right:6px;vertical-align:1px}
+.mail{display:block;padding:8px 0;border-top:1px solid rgba(15,42,66,.7);color:var(--ice);text-decoration:none;min-width:0}.mail:first-child{border-top:0}.mail:hover b{color:var(--cyan)}
+.mail .mu{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .todo{border-left:2px solid var(--warn);padding:6px 0 6px 10px;margin:6px 0;color:var(--mu);font-size:12.5px}
 /* alarm overlay */
 #wake{position:fixed;inset:0;z-index:50;background:radial-gradient(circle at 50% 40%,rgba(41,200,255,.25),transparent 60%),var(--bg);display:grid;place-items:center;text-align:center;padding:24px}
@@ -146,14 +149,24 @@ input,select{width:100%;background:#030b14;color:var(--ice);border:1px solid var
       <div class="ph"><h2>Today's schedule</h2><span class="chip" id="schChip">Sleek Auto</span></div>
       <div class="lbl">Sleek Auto washes</div>
       <div class="list" id="washList"><div class="mu">Sign in to Sleek Auto (right panel) to load your washes.</div></div>
-      <div class="lbl" style="margin-top:12px">Kite lessons · TideForce</div>
-      <div class="todo">Phase 2: Jarvis reads your lessons under "Hayden" on capesports.tideforce.app.</div>
+      <div class="lbl" style="margin-top:12px">Kite lessons · Calendar</div>
+      <div class="list" id="calList"><div class="mu">Connect Google (Inbox panel) to load your lessons and calendar.</div></div>
       <a class="mu" href="https://capesports.tideforce.app/login" target="_blank" rel="noopener">Open TideForce →</a>
     </div>
 
     <div class="panel">
-      <div class="ph"><h2>Inbox triage</h2><span class="chip wait">Phase 2</span></div>
-      <div class="todo">Jarvis will sort your Gmail into "answer", "pay" and "ignore" once Gmail is connected.</div>
+      <div class="ph"><h2>Inbox triage</h2><span class="chip off" id="gChip">Not connected</span></div>
+      <div id="gConnect"><button id="gBtn" type="button">Connect Google</button><div class="mu" style="margin-top:8px">Read-only. Jarvis can look at your mail and calendar, never send, delete or change anything.</div></div>
+      <div id="mailBox" hidden>
+        <div class="kv3" style="margin-bottom:6px">
+          <div><div class="lbl" style="color:var(--warn)">Pay</div><div class="num" id="nPay">0</div></div>
+          <div><div class="lbl" style="color:var(--cyan)">Answer</div><div class="num" id="nAns">0</div></div>
+          <div><div class="lbl">Ignore</div><div class="num" id="nIgn" style="color:var(--mu)">0</div></div>
+        </div>
+        <div class="list" id="mailList"></div>
+        <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap"><button class="ghost" id="mailRefresh" type="button">Refresh</button><a class="btn ghost" href="https://mail.google.com/mail/u/0/#inbox" target="_blank" rel="noopener">Open Gmail</a></div>
+        <div class="mu" id="mailMsg" style="margin-top:6px"></div>
+      </div>
     </div>
   </section>
 
@@ -275,6 +288,7 @@ input,select{width:100%;background:#030b14;color:var(--ice);border:1px solid var
 <div class="toast" id="toast" hidden></div>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
+<script src="https://accounts.google.com/gsi/client" async></script>
 <script>
 /* ===== config ===== */
 const LAT=-33.0917, LON=18.0333, TZ="Africa/Johannesburg", NAME="Hayden";
@@ -373,13 +387,15 @@ async function handle(raw){
   const t=raw.toLowerCase();
   if(/\b(book|schedule)\b/.test(t))return cmdBook(raw);
   if(/good morning|briefing|wake/.test(t))return briefing();
+  if(/lesson|calendar|appointment|meeting/.test(t))return say(await calSpeech());
+  if(/e-?mail|inbox|\bmail\b|pay|bill|invoice/.test(t))return say(await mailSpeech(true));
   if(/wind|weather|kite|rain|temperature|hot|cold/.test(t))return say(wxSpeech());
   if(/easy lover|music|song|play/.test(t)){say("Playing Easy Lover.");return openSong()}
   if(/money|income|made|earn|revenue|profit/.test(t))return say(incomeSpeech());
-  if(/today|schedule|wash|booking|on for|calendar/.test(t))return say(todaySpeech());
+  if(/today|schedule|wash|booking|on for/.test(t)){await say(todaySpeech());return say(await calSpeech())}
   if(/\btime\b/.test(t))return say("It's "+new Date().toLocaleTimeString("en-ZA",{hour:"2-digit",minute:"2-digit",timeZone:TZ})+".");
   if(/thank/.test(t))return say("Always, sir.");
-  return say("I can't do that one yet. Right now I handle the weather, your schedule, income, bookings and your wake-up. More is coming.");
+  return say("I can't do that one yet. Right now I handle the weather, your schedule, lessons, emails, income, bookings and your wake-up. More is coming.");
 }
 function openSong(){const w=window.open(SONG,"_blank");if(!w)location.href=SONG}
 
@@ -467,7 +483,7 @@ function renderIncome(){
 }
 $("#kF").onsubmit=e=>{e.preventDefault();const a=+$("#kA").value;if(!(a>0))return toast("Enter an amount.");kite.push({id:Date.now().toString(36),a,d:$("#kD").value||ld(),n:$("#kN").value.trim()});store.set("kite",kite);$("#kA").value="";$("#kN").value="";renderIncome();toast("Kite payment logged.")};
 function incomeSpeech(){const mo=ld().slice(0,7),k=kiteSum(mo);if(!saOn)return "Kitesurfing has brought in "+R(k)+" this month. Connect Sleek Auto and I'll add the washes.";const s=sleekShare(mo);return "This month: Sleek Auto did "+R(s.rev)+" from "+s.n+" washes, your share is "+R(s.mine)+". Kitesurfing adds "+R(k)+". Total "+R(s.mine+k)+"."}
-function todaySpeech(){if(!saOn)return "Connect Sleek Auto and I'll read out today's washes. TideForce lessons come in the next phase.";const l=washes.filter(w=>w.date===ld()&&!w.done).sort((x,y)=>(x.time||"").localeCompare(y.time||""));return l.length?"You have "+l.length+" wash"+(l.length>1?"es":"")+" today. "+l.map(w=>w.time+", "+(w.client||"a client")+" at "+w.address).join(". ")+".":"No washes booked for today."}
+function todaySpeech(){if(!saOn)return "Connect Sleek Auto and I'll read out today's washes.";const l=washes.filter(w=>w.date===ld()&&!w.done).sort((x,y)=>(x.time||"").localeCompare(y.time||""));return l.length?"You have "+l.length+" wash"+(l.length>1?"es":"")+" today. "+l.map(w=>w.time+", "+(w.client||"a client")+" at "+w.address).join(". ")+".":"No washes booked for today."}
 
 /* ===== weather ===== */
 let wx=null;const WMO={0:"Clear",1:"Mostly clear",2:"Partly cloudy",3:"Overcast",45:"Fog",48:"Fog",51:"Light drizzle",53:"Drizzle",55:"Heavy drizzle",61:"Light rain",63:"Rain",65:"Heavy rain",80:"Showers",81:"Showers",82:"Heavy showers",95:"Thunderstorm"};
@@ -496,8 +512,8 @@ function wxSpeech(){if(!wx)return "I can't reach the weather service right now."
 const WAKE=["Rise and shine, Hayden. The empire doesn't build itself.","Good morning, sir. Systems are online and the wind is waiting.","Wake up, Hayden. Three businesses, one legend. Let's go.","Morning, boss. Coffee first, then we take over the day.","Up and at it, Hayden. Today's a good day to stack wins."];
 async function briefing(){
   const line=WAKE[Math.floor(Math.random()*WAKE.length)];
-  await say(line);await say(wxSpeech());await say(todaySpeech());
-  await say("Emails and lessons come online in the next upgrade.");
+  await gFresh();await say(line);await say(wxSpeech());await say(todaySpeech());
+  await say(await calSpeech());await say(await mailSpeech(false));
 }
 $("#morningBtn").onclick=briefing;
 /* ===== laptop alarm ===== */
@@ -558,7 +574,9 @@ function ring(test){
 function stopRing(){ringing=false;clearInterval(rampT);clearInterval(beepT);beepT=null;try{songA.pause()}catch(e){}try{player&&player.pauseVideo()}catch(e){}}
 $("#codeF").onsubmit=async e=>{e.preventDefault();if($("#codeI").value.trim()!==code){$("#codeMsg").textContent="Wrong code. Look closer.";$("#codeI").value="";return}
   stopRing();armed=false;updArm();$("#wake").hidden=true;try{document.fullscreenElement&&document.exitFullscreen()}catch(e){}
-  await say($("#wakeP").textContent);await say(wxSpeech());await say(todaySpeech());await say("Emails and lessons come online in the next upgrade. Let's get it, Hayden.");if(hf.on)hfResume()};
+  const fresh=gFresh(); // the code entry counts as a click, so Google can refresh its sign-in here
+  await say($("#wakeP").textContent);await say(wxSpeech());await say(todaySpeech());await fresh;
+  await say(await calSpeech());await say(await mailSpeech(false));await say("Let's get it, Hayden.");if(hf.on)hfResume()};
 function checkAlarm(){
   if(!armed||ringing)return;const d=nowMin()-alarmAt();
   if(d>=0&&d<120&&store.get("fired","")!==ld()){store.set("fired",ld());ring(false)}
@@ -603,6 +621,102 @@ async function hfAuto(){
 hfUi();hfAuto();elSetup();
 if(location.hash==="#arm")toast("Tap 'Arm alarm for tonight' to arm.");
 updArm();loadYT();
+
+/* ===== Google: Gmail triage + Calendar (read-only) ===== */
+const G_CLIENT="608274672565-n7gbjjkbh5ocqds20adsv8lqm05n51ls.apps.googleusercontent.com";
+const G_SCOPES="https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/calendar.readonly";
+const G={tok:store.get("gTok",null),client:null,wait:null,mail:[],cal:[],mailAt:0,calAt:0};
+const gOk=()=>G.tok&&G.tok.exp>Date.now()+60000;
+function gInit(){if(G.client||!(window.google&&google.accounts&&google.accounts.oauth2))return!!G.client;
+  G.client=google.accounts.oauth2.initTokenClient({client_id:G_CLIENT,scope:G_SCOPES,callback:r=>{
+    if(r.error){G.wait&&G.wait(false);G.wait=null;gUi(r.error==="access_denied"?"You said no to Google access.":"Google sign-in didn't finish.");return}
+    G.tok={t:r.access_token,exp:Date.now()+(+r.expires_in||3600)*1000};store.set("gTok",G.tok);store.set("gOn",true);G.wait&&G.wait(true);G.wait=null;gUi();gLoad()},
+    error_callback:()=>{G.wait&&G.wait(false);G.wait=null;gUi("The Google pop-up was closed or blocked. Allow pop-ups for Jarvis and try again.")}});return true}
+function gSignIn(first){ // must run from a click
+  if(!gInit()){gUi("Google sign-in is still loading. Try again in a few seconds.");return Promise.resolve(false)}
+  if(G.pending)return G.pending;
+  G.pending=new Promise(res=>{G.wait=v=>{G.pending=null;res(v)};G.client.requestAccessToken({prompt:first?"consent":""})});
+  return G.pending;
+}
+function gFresh(){return gOk()||!store.get("gOn",false)?Promise.resolve(gOk()):gSignIn(false)}
+document.addEventListener("click",e=>{if(store.get("gOn",false)&&!gOk()&&!G.wait&&e.target.id!=="gBtn")gSignIn(false)},true); // quietly renew the hourly Google sign-in on your next click
+$("#gBtn").onclick=()=>gSignIn(!store.get("gOn",false));
+$("#mailRefresh").onclick=()=>gLoad(true);
+function gUi(err){
+  const on=gOk();$("#gConnect").hidden=on;$("#mailBox").hidden=!on;
+  $("#gChip").textContent=on?"Live":store.get("gOn",false)?"Click to reconnect":"Not connected";$("#gChip").className="chip "+(on?"live":store.get("gOn",false)?"wait":"off");
+  if(!on)$("#gBtn").textContent=store.get("gOn",false)?"Reconnect Google":"Connect Google";
+  if(err)$("#gConnect .mu").textContent=err;
+}
+async function gApi(url){
+  if(!gOk())throw new Error("signin");
+  const r=await fetch(url,{headers:{Authorization:"Bearer "+G.tok.t}});
+  if(r.status===401){G.tok=null;store.set("gTok",null);gUi();throw new Error("signin")}
+  if(!r.ok)throw new Error("Google error "+r.status);return r.json();
+}
+const hdr=(m,n)=>((m.payload&&m.payload.headers)||[]).find(h=>h.name.toLowerCase()===n.toLowerCase())?.value||"";
+const fromName=f=>(f.match(/^\s*"?([^"<]+?)"?\s*</)||[])[1]||f.replace(/<.*>/,"").trim()||f;
+const PAY_RE=/\b(invoice|payment (?:due|reminder|overdue|failed|request)|amount due|overdue|outstanding|statement|debit order|your bill|bill is ready|pay now|account (?:is )?(?:due|in arrears)|final notice|rekening|faktuur|betaling|renewal due|subscription (?:failed|expir))/i;
+const PROMO_RE=/\b(\d+% off|sale|deal|discount|promo|black friday|shop now|limited time|webinar|newsletter)\b/i;
+function triage(m){
+  const L=m.labelIds||[],f=hdr(m,"From"),sub=hdr(m,"Subject"),txt=sub+" "+(m.snippet||"");
+  const bot=/no-?reply|donotreply|notification|newsletter|mailer|marketing|news@|info@|hello@|support@|updates@/i.test(f);
+  const bulk=!!hdr(m,"List-Unsubscribe")||L.some(x=>/CATEGORY_(PROMOTIONS|SOCIAL|FORUMS)/.test(x));
+  if(PAY_RE.test(txt)&&!PROMO_RE.test(txt)&&!L.includes("CATEGORY_PROMOTIONS"))return"pay";
+  if(bulk||bot)return"ignore";
+  return"answer";
+}
+async function gMail(){
+  const list=await gApi("https://gmail.googleapis.com/gmail/v1/users/me/messages?maxResults=40&q="+encodeURIComponent("is:unread in:inbox newer_than:7d"));
+  const ids=(list.messages||[]).map(x=>x.id),out=[];
+  for(let i=0;i<ids.length;i+=10){const part=await Promise.all(ids.slice(i,i+10).map(id=>gApi(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${id}?format=metadata&metadataHeaders=From&metadataHeaders=Subject&metadataHeaders=List-Unsubscribe`).catch(()=>null)));out.push(...part.filter(Boolean))}
+  G.mail=out.map(m=>({id:m.id,th:m.threadId,from:fromName(hdr(m,"From")),sub:hdr(m,"Subject")||"(no subject)",snip:(m.snippet||"").replace(/&#39;/g,"'").replace(/&quot;/g,'"').replace(/&amp;/g,"&"),pile:triage(m),imp:(m.labelIds||[]).includes("IMPORTANT")}));G.mailAt=Date.now();renderMail();
+}
+function renderMail(){
+  const by=p=>G.mail.filter(m=>m.pile===p);$("#nPay").textContent=by("pay").length;$("#nAns").textContent=by("answer").length;$("#nIgn").textContent=by("ignore").length;
+  const show=[...by("pay"),...by("answer").sort((a,b)=>b.imp-a.imp)].slice(0,8);
+  $("#mailList").innerHTML=show.map(m=>`<a class="mail" href="https://mail.google.com/mail/u/0/#inbox/${encodeURIComponent(m.th)}" target="_blank" rel="noopener"><span class="pile" style="color:var(--${m.pile==="pay"?"warn":"cyan"})">${m.pile}</span><b>${esc(m.from)}</b><div class="mu">${esc(m.sub)}</div></a>`).join("")||'<div class="mu">Nothing unread needs you. Inbox zero energy.</div>';
+  $("#mailMsg").textContent="Unread from the last 7 days · updated "+new Date(G.mailAt).toLocaleTimeString("en-ZA",{hour:"2-digit",minute:"2-digit",timeZone:TZ});
+}
+const LESSON_RE=/tide|lesson|kite|capesports|cape sports|student|ikiteschool|iko/i;
+async function gCal(){
+  const cl=await gApi("https://www.googleapis.com/calendar/v3/users/me/calendarList?minAccessRole=reader");
+  const t0=new Date(ld()+"T00:00:00+02:00"),t1=new Date(t0.getTime()+8*864e5);
+  const cals=(cl.items||[]).filter(c=>c.selected!==false&&!/holiday|birthdays|week numbers/i.test(c.summary||"")).slice(0,12);
+  const res=await Promise.all(cals.map(c=>gApi(`https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(c.id)}/events?singleEvents=true&orderBy=startTime&maxResults=50&timeMin=${t0.toISOString()}&timeMax=${t1.toISOString()}`).then(r=>(r.items||[]).map(e=>({cal:c.summary||"",e}))).catch(()=>[])));
+  G.cal=res.flat().filter(x=>x.e.status!=="cancelled").map(({cal,e})=>{const st=e.start.dateTime||e.start.date,allDay=!e.start.dateTime;const d=new Date(allDay?st+"T00:00:00+02:00":st);
+    return{title:e.summary||"(busy)",cal,day:ld(d),time:allDay?"All day":d.toLocaleTimeString("en-ZA",{hour:"2-digit",minute:"2-digit",timeZone:TZ}),ts:d.getTime(),lesson:LESSON_RE.test((e.summary||"")+" "+cal+" "+(e.description||"")),where:e.location||""}}).sort((a,b)=>a.ts-b.ts);
+  G.calAt=Date.now();renderCal();
+}
+function renderCal(){
+  const td=ld(),today=G.cal.filter(x=>x.day===td),nextL=G.cal.find(x=>x.lesson&&x.day>td);
+  $("#calList").innerHTML=(today.map(x=>`<div class="wash"><b>${esc(x.time)}</b>${x.lesson?'<span class="pile" style="color:var(--ok)">lesson</span>':""}${esc(x.title)}${x.where?`<div class="mu">${esc(x.where)}</div>`:""}</div>`).join("")||'<div class="mu">Nothing on your calendar today.</div>')
+    +(nextL?`<div class="mu" style="margin-top:6px">Next lesson: ${esc(new Date(nextL.ts).toLocaleDateString("en-ZA",{weekday:"short",day:"numeric",month:"short",timeZone:TZ}))} ${esc(nextL.time)} · ${esc(nextL.title)}</div>`:"");
+}
+async function gLoad(force){
+  if(!gOk()){gUi();return}
+  try{await Promise.all([(force||Date.now()-G.mailAt>5*6e4)&&gMail(),(force||Date.now()-G.calAt>5*6e4)&&gCal()])}
+  catch(e){if(e.message!=="signin")$("#mailMsg").textContent=e.message+". Try Refresh."}
+}
+async function mailSpeech(detail){
+  if(!gOk())return store.get("gOn",false)?"Click anywhere on Jarvis to reconnect Google, then ask me again.":"Connect Google in the inbox panel and I'll sort your email.";
+  try{await gLoad()}catch(e){}
+  const pay=G.mail.filter(m=>m.pile==="pay"),ans=G.mail.filter(m=>m.pile==="answer").sort((a,b)=>b.imp-a.imp),ign=G.mail.filter(m=>m.pile==="ignore");
+  if(!pay.length&&!ans.length)return "Inbox is clear. Nothing unread needs you"+(ign.length?", just "+ign.length+" promos and notifications you can ignore.":".");
+  const list=(a,n)=>a.slice(0,n).map(m=>m.from+(detail?" about "+m.sub:"")).join(", ");
+  return (pay.length?pay.length+" to pay: "+list(pay,3)+". ":"")+(ans.length?ans.length+" worth answering: "+list(ans,detail?4:3)+". ":"")+(ign.length?ign.length+" you can ignore.":"");
+}
+async function calSpeech(){
+  if(!gOk())return store.get("gOn",false)?"Reconnect Google and I'll check your lessons.":"Connect Google and I'll read your lessons from your calendar.";
+  try{await gLoad()}catch(e){}
+  const td=ld(),today=G.cal.filter(x=>x.day===td),les=today.filter(x=>x.lesson),other=today.filter(x=>!x.lesson),nextL=G.cal.find(x=>x.lesson&&x.day>td);
+  let out=les.length?"You have "+les.length+" kite lesson"+(les.length>1?"s":"")+" today: "+les.map(x=>x.time+", "+x.title).join(". ")+". ":"No kite lessons today. ";
+  if(other.length)out+="Also on the calendar: "+other.slice(0,4).map(x=>x.time+", "+x.title).join(". ")+". ";
+  if(!les.length&&nextL)out+="Next lesson is "+new Date(nextL.ts).toLocaleDateString("en-ZA",{weekday:"long",timeZone:TZ})+" at "+nextL.time+".";
+  return out.trim();
+}
+gUi();(function waitG(n){if(gInit()){if(gOk())gLoad()}else if(n<40)setTimeout(()=>waitG(n+1),250)})(0);
+setInterval(()=>{if(gOk())gLoad();else gUi()},5*6e4);
 
 /* ===== clock ===== */
 function tick(){const n=new Date();$("#clk").textContent=n.toLocaleTimeString("en-ZA",{hour:"2-digit",minute:"2-digit",timeZone:TZ});$("#dte").textContent=n.toLocaleDateString("en-ZA",{weekday:"long",day:"numeric",month:"long",timeZone:TZ});checkAlarm()}
