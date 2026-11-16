@@ -402,7 +402,7 @@ function sayLocal(text,id){
   const parts=String(text).match(/[^.!?]+[.!?]*/g)||[text];
   return new Promise(res=>{let i=0;const next=()=>{if(id!==sayId)return res();if(i>=parts.length){setMode("idle");return res()}
     const u=new SpeechSynthesisUtterance(parts[i++].trim());if(voice){u.voice=voice;u.lang=voice.lang}u.rate=vRate;u.pitch=1;
-    u.onstart=()=>setMode("speaking");u.onend=next;u.onerror=next;speechSynthesis.speak(u)};next()});
+    u.onstart=()=>setMode("speaking");u.onboundary=()=>{VZ.kick=1};u.onend=next;u.onerror=next;speechSynthesis.speak(u)};next()});
 }
 function setMode(m){mode=m;$("#state").textContent={idle:"Online",listening:"Listening",speaking:"Speaking",thinking:"Processing"}[m]||m;$("#mic").classList.toggle("on",m==="listening")}
 
@@ -413,10 +413,10 @@ function listenOnce(cb,ms){
   try{rec&&rec.abort()}catch(e){}
   speechSynthesis&&speechSynthesis.cancel();
   rec=new SR();rec.lang="en-ZA";rec.interimResults=true;rec.maxAlternatives=1;let done=false,tm=null;
-  rec.onstart=()=>{setMode("listening");if(ms)tm=setTimeout(()=>{try{rec.stop()}catch(e){}},ms)};
+  rec.onstart=()=>{setMode("listening");micViz(true);if(ms)tm=setTimeout(()=>{try{rec.stop()}catch(e){}},ms)};
   rec.onresult=e=>{const t=[...e.results].map(r=>r[0].transcript).join(" ");$("#heard").textContent="“"+t+"”";if(e.results[e.results.length-1].isFinal&&!done){done=true;clearTimeout(tm);cb(t)}};
   rec.onerror=e=>{setMode("idle");if(e.error==="not-allowed")toast("Allow the microphone for Jarvis in the browser settings.")};
-  rec.onend=()=>{clearTimeout(tm);if(mode==="listening")setMode("idle");if(!done)cb("")};
+  rec.onend=()=>{clearTimeout(tm);micViz(false);if(mode==="listening")setMode("idle");if(!done)cb("")};
   try{rec.start()}catch(e){}
 }
 $("#mic").onclick=()=>{if(mode==="listening"){try{rec.stop()}catch(e){}return}listenOnce(async t=>{if(t)await handle(t);if(hf.on)hfResume()})};
@@ -945,34 +945,69 @@ setInterval(()=>{if(gOk())gLoad();else gUi()},5*6e4);
 /* ===== clock ===== */
 function tick(){const n=new Date();$("#clk").textContent=n.toLocaleTimeString("en-ZA",{hour:"2-digit",minute:"2-digit",timeZone:TZ});$("#dte").textContent=n.toLocaleDateString("en-ZA",{weekday:"long",day:"numeric",month:"long",timeZone:TZ});checkAlarm()}
 
-/* ===== core animation ===== */
+/* ===== voice-reactive core ===== */
+// Sound sources: Jarvis's ElevenLabs voice (real audio analysis), your mic while Jarvis listens,
+// or a simulated voice envelope for the built-in browser voice (browsers don't expose its audio).
+const VZ={ctx:null,talk:null,mic:null,micStream:null,kick:0,f:new Uint8Array(128),w:new Uint8Array(256)};
+function vizInit(){ // needs a click or key press so the browser allows audio
+  if(VZ.ctx){VZ.ctx.resume().catch(()=>{});return}
+  try{VZ.ctx=new (window.AudioContext||window.webkitAudioContext)();const src=VZ.ctx.createMediaElementSource(talkA);VZ.talk=VZ.ctx.createAnalyser();VZ.talk.fftSize=256;VZ.talk.smoothingTimeConstant=.6;src.connect(VZ.talk);VZ.talk.connect(VZ.ctx.destination)}catch(e){VZ.ctx=null}
+}
+["pointerdown","keydown"].forEach(ev=>document.addEventListener(ev,vizInit,{capture:true}));
+async function micViz(on){
+  if(!on){if(VZ.micStream){VZ.micStream.getTracks().forEach(t=>t.stop());VZ.micStream=null;VZ.mic=null}return}
+  if(!VZ.ctx||VZ.ctx.state!=="running"||VZ.micStream)return;
+  try{VZ.micStream=await navigator.mediaDevices.getUserMedia({audio:true});if(mode!=="listening"){micViz(false);return}
+    const src=VZ.ctx.createMediaStreamSource(VZ.micStream);VZ.mic=VZ.ctx.createAnalyser();VZ.mic.fftSize=256;VZ.mic.smoothingTimeConstant=.5;src.connect(VZ.mic)}catch(e){VZ.micStream=null}
+}
+function vizRead(t){ // -> {lvl 0..1, bins[64] 0..1, wave[64] -1..1}
+  const bins=new Array(64).fill(0),wave=new Array(64).fill(0);let lvl=0;
+  const an=mode==="speaking"&&VZ.talk&&!talkA.paused?VZ.talk:mode==="listening"&&VZ.mic?VZ.mic:null;
+  if(an){an.getByteFrequencyData(VZ.f);an.getByteTimeDomainData(VZ.w);let sum=0;
+    for(let i=0;i<64;i++){bins[i]=Math.min(1,(VZ.f[i+2]/255)*1.25)}
+    for(let i=0;i<VZ.w.length;i++){const v=(VZ.w[i]-128)/128;sum+=v*v}
+    for(let i=0;i<64;i++)wave[i]=(VZ.w[i*4]-128)/128;lvl=Math.min(1,Math.sqrt(sum/VZ.w.length)*(an===VZ.mic?5:3.2))}
+  else if(mode==="speaking"||mode==="listening"){ // simulated envelope
+    VZ.kick*=.9;const env=Math.max(0,Math.min(1,(mode==="speaking"?.42:.18)+.28*Math.sin(t*.31)*Math.sin(t*.083+1)+VZ.kick*.5));
+    for(let i=0;i<64;i++)bins[i]=env*Math.abs(Math.sin(i*.45+t*.21)*Math.cos(i*.13-t*.05))*(1-i/90);
+    for(let i=0;i<64;i++)wave[i]=env*.6*Math.sin(i*.6+t*.4)*Math.sin(i*.17-t*.13);lvl=env}
+  else{lvl=.06+.04*Math.sin(t*.03);for(let i=0;i<64;i++)bins[i]=.08+.06*Math.sin(i*.7+t*.05)}
+  return{lvl,bins,wave};
+}
 (function(){
-  const cv=$("#orb"),x=cv.getContext("2d"),S=cv.width,C=S/2,still=matchMedia("(prefers-reduced-motion: reduce)").matches;let t=0;
-  const glow=(b,c)=>{x.shadowBlur=b;x.shadowColor=c};
-  function arc(r,a0,a1,w,a){x.beginPath();x.arc(C,C,r,a0,a1);x.lineWidth=w;x.strokeStyle=`rgba(41,200,255,${a})`;x.stroke()}
-  function ticks(r,n,len,w,a,rot,skip){for(let i=0;i<n;i++){if(skip&&skip(i))continue;const g=rot+i/n*Math.PI*2;x.beginPath();x.moveTo(C+Math.cos(g)*r,C+Math.sin(g)*r);x.lineTo(C+Math.cos(g)*(r+len),C+Math.sin(g)*(r+len));x.lineWidth=w;x.strokeStyle=`rgba(41,200,255,${a})`;x.stroke()}}
+  const cv=$("#orb"),x=cv.getContext("2d"),S=cv.width,C=S/2,still=matchMedia("(prefers-reduced-motion: reduce)").matches;
+  let t=0,L=0,prevL=0,rot=[0,0,0],waves=[],B=new Array(64).fill(0);
+  const col=()=>mode==="listening"?"110,236,255":"41,200,255";
+  const glow=(b,a)=>{x.shadowBlur=b;x.shadowColor=`rgba(${col()},${a})`};
+  function arc(r,a0,a1,w,a){x.beginPath();x.arc(C,C,r,a0,a1);x.lineWidth=w;x.strokeStyle=`rgba(${col()},${a})`;x.stroke()}
+  function ticks(r,n,len,w,a,rt,skip){x.strokeStyle=`rgba(${col()},${a})`;x.lineWidth=w;x.beginPath();for(let i=0;i<n;i++){if(skip&&skip(i))continue;const g=rt+i/n*Math.PI*2;x.moveTo(C+Math.cos(g)*r,C+Math.sin(g)*r);x.lineTo(C+Math.cos(g)*(r+len),C+Math.sin(g)*(r+len))}x.stroke()}
   function frame(){
-    const sp=mode==="listening"?2.4:mode==="speaking"?1.8:1,pulse=mode==="speaking"?(Math.sin(t*0.35)*.5+.5):mode==="listening"?(Math.sin(t*.18)*.5+.5):(Math.sin(t*.04)*.5+.5);
-    x.clearRect(0,0,S,S);glow(22,"rgba(41,200,255,.9)");
-    // outer crosshair
-    x.lineWidth=3;x.strokeStyle="rgba(41,200,255,.55)";[[-1,0],[1,0],[0,-1],[0,1]].forEach(([a,b])=>{x.beginPath();x.moveTo(C+a*352,C+b*352);x.lineTo(C+a*402,C+b*402);x.stroke()});
-    // outer ring broken
-    const r0=t*.004*sp;for(let i=0;i<4;i++)arc(370,r0+i*Math.PI/2+.12,r0+i*Math.PI/2+Math.PI/2-.12,5,.85);
-    ticks(340,90,10,2,.35,-r0*.7);
-    // mid thick segments
-    const r1=-t*.008*sp;arc(300,r1,r1+Math.PI*1.25,16,.9);arc(300,r1+Math.PI*1.35,r1+Math.PI*1.55,16,.6);arc(300,r1+Math.PI*1.65,r1+Math.PI*1.9,16,.35);
-    arc(276,0,Math.PI*2,2,.5);
-    // equalizer comb
-    const r2=t*.006*sp;glow(10,"rgba(41,200,255,.7)");
-    for(let i=0;i<120;i++){if(i>78&&i<96)continue;const g=r2+i/120*Math.PI*2,amp=(mode==="idle"?10:22)*(.4+.6*Math.abs(Math.sin(i*.7+t*.12*sp)))*(.6+pulse*.6);x.beginPath();x.moveTo(C+Math.cos(g)*214,C+Math.sin(g)*214);x.lineTo(C+Math.cos(g)*(214+18+amp),C+Math.sin(g)*(214+18+amp));x.lineWidth=3;x.strokeStyle=`rgba(41,200,255,${.35+.5*((i%3)/2)})`;x.stroke()}
-    glow(18,"rgba(41,200,255,.9)");
-    arc(196,-r2*1.4,-r2*1.4+Math.PI*1.6,8,.8);
-    ticks(168,60,6,2,.55,r2*2,i=>i%5===0);
-    // inner ring
-    arc(140,0,Math.PI*2,3,.9);
+    const v=vizRead(t);L+= (v.lvl-L)*(v.lvl>L?.5:.12);for(let i=0;i<64;i++)B[i]+=(v.bins[i]-B[i])*(v.bins[i]>B[i]?.6:.15);
+    if(L-prevL>.09&&L>.25)waves.push({r:150,a:.7});prevL=L;
+    const sp=1+L*4;rot[0]+=.004*sp;rot[1]-=.008*sp;rot[2]+=.006*sp;
+    x.setTransform(1,0,0,1,0,0);x.clearRect(0,0,S,S);
+    const sc=1+L*.045;x.setTransform(sc,0,0,sc,C*(1-sc),C*(1-sc));
+    glow(22,.9);
+    x.lineWidth=3;x.strokeStyle=`rgba(${col()},.55)`;x.beginPath();[[-1,0],[1,0],[0,-1],[0,1]].forEach(([a,b])=>{x.moveTo(C+a*352,C+b*352);x.lineTo(C+a*(402+L*14),C+b*(402+L*14))});x.stroke();
+    for(let i=0;i<4;i++)arc(370,rot[0]+i*Math.PI/2+.12,rot[0]+i*Math.PI/2+Math.PI/2-.12,5,.6+L*.4);
+    ticks(340,90,10+L*8,2,.3+L*.4,-rot[0]*.7);
+    arc(300,rot[1],rot[1]+Math.PI*1.25,16+L*10,.9);arc(300,rot[1]+Math.PI*1.35,rot[1]+Math.PI*1.55,16,.6);arc(300,rot[1]+Math.PI*1.65,rot[1]+Math.PI*1.9,16,.35);
+    arc(276,0,Math.PI*2,2,.4+L*.4);
+    // spectrum ring: real voice frequencies, mirrored around the circle
+    glow(10+L*14,.8);x.lineWidth=3.5;
+    for(let i=0;i<128;i++){const k=i<64?i:127-i,g=rot[2]+i/128*Math.PI*2-Math.PI/2,amp=6+B[k]*78;
+      x.strokeStyle=`rgba(${col()},${.3+.7*Math.min(1,B[k]*1.4)})`;x.beginPath();x.moveTo(C+Math.cos(g)*212,C+Math.sin(g)*212);x.lineTo(C+Math.cos(g)*(212+amp),C+Math.sin(g)*(212+amp));x.stroke()}
+    glow(18,.9);
+    arc(196,-rot[2]*1.4,-rot[2]*1.4+Math.PI*1.6,8,.8);
+    ticks(168,60,6,2,.55,rot[2]*2,i=>i%5===0);
+    // voice waveform ring
+    x.beginPath();for(let i=0;i<=128;i++){const k=i%128,w=v.wave[k<64?k:127-k]||0,g=i/128*Math.PI*2,r=140+w*60*Math.min(1,L*2.2);i?x.lineTo(C+Math.cos(g)*r,C+Math.sin(g)*r):x.moveTo(C+Math.cos(g)*r,C+Math.sin(g)*r)}
+    x.lineWidth=3;x.strokeStyle=`rgba(${col()},.95)`;x.stroke();
+    // shock waves on loud syllables
+    waves=waves.filter(w=>w.a>.03);waves.forEach(w=>{arc(w.r,0,Math.PI*2,2,w.a);w.r+=7;w.a*=.93});
     // core
-    const g=x.createRadialGradient(C,C,0,C,C,130);g.addColorStop(0,`rgba(217,244,255,${.55+pulse*.4})`);g.addColorStop(.12,`rgba(41,200,255,${.35+pulse*.3})`);g.addColorStop(1,"rgba(41,200,255,0)");
-    x.shadowBlur=0;x.fillStyle=g;x.beginPath();x.arc(C,C,130,0,Math.PI*2);x.fill();
+    const R=118+L*70,g=x.createRadialGradient(C,C,0,C,C,R);g.addColorStop(0,`rgba(230,250,255,${Math.min(1,.5+L*.8)})`);g.addColorStop(.18,`rgba(${col()},${.3+L*.5})`);g.addColorStop(1,`rgba(${col()},0)`);
+    x.shadowBlur=0;x.fillStyle=g;x.beginPath();x.arc(C,C,R,0,Math.PI*2);x.fill();
     t++;if(!still)requestAnimationFrame(frame);
   }
   frame();
