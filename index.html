@@ -625,7 +625,7 @@ updArm();loadYT();
 /* ===== Google: Gmail triage + Calendar (read-only) ===== */
 const G_CLIENT="608274672565-n7gbjjkbh5ocqds20adsv8lqm05n51ls.apps.googleusercontent.com";
 const G_SCOPES="https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/calendar.readonly";
-const G={tok:store.get("gTok",null),client:null,wait:null,mail:[],cal:[],mailAt:0,calAt:0};
+const G={tok:store.get("gTok",null),client:null,wait:null,mail:[],cal:[],les:[],mailAt:0,calAt:0,lesAt:0};
 const gOk=()=>G.tok&&G.tok.exp>Date.now()+60000;
 function gInit(){if(G.client||!(window.google&&google.accounts&&google.accounts.oauth2))return!!G.client;
   G.client=google.accounts.oauth2.initTokenClient({client_id:G_CLIENT,scope:G_SCOPES,callback:r=>{
@@ -689,13 +689,55 @@ async function gCal(){
   G.calAt=Date.now();renderCal();
 }
 function renderCal(){
-  const td=ld(),today=G.cal.filter(x=>x.day===td),nextL=G.cal.find(x=>x.lesson&&x.day>td);
-  $("#calList").innerHTML=(today.map(x=>`<div class="wash"><b>${esc(x.time)}</b>${x.lesson?'<span class="pile" style="color:var(--ok)">lesson</span>':""}${esc(x.title)}${x.where?`<div class="mu">${esc(x.where)}</div>`:""}</div>`).join("")||'<div class="mu">Nothing on your calendar today.</div>')
+  const all=allCal(),td=ld(),today=all.filter(x=>x.day===td),nextL=all.find(x=>x.lesson&&x.day>td);
+  $("#calList").innerHTML=(today.map(x=>`<div class="wash"><b>${esc(x.time)}</b>${x.lesson?'<span class="pile" style="color:var(--ok)">lesson</span>':""}${x.link?`<a href="${esc(x.link)}" target="_blank" rel="noopener" style="color:var(--ice)">${esc(x.title)}</a>`:esc(x.title)}${x.where?`<div class="mu">${esc(x.where)}</div>`:""}</div>`).join("")||'<div class="mu">Nothing on your calendar today.</div>')
     +(nextL?`<div class="mu" style="margin-top:6px">Next lesson: ${esc(new Date(nextL.ts).toLocaleDateString("en-ZA",{weekday:"short",day:"numeric",month:"short",timeZone:TZ}))} ${esc(nextL.time)} · ${esc(nextL.title)}</div>`:"");
 }
+/* Cape Sports / TideForce lessons, read from their confirmation emails */
+const LESSON_Q='(from:tideforce OR from:capesports OR "cape sports" OR tideforce) newer_than:60d';
+const MONTHS=["jan","feb","mar","apr","may","jun","jul","aug","sep","oct","nov","dec"];
+function b64(d){try{const bin=atob(d.replace(/-/g,"+").replace(/_/g,"/"));return new TextDecoder().decode(Uint8Array.from(bin,c=>c.charCodeAt(0)))}catch(e){return""}}
+function bodyText(p){
+  let plain="",html="";(function walk(x){if(!x)return;if(x.mimeType==="text/plain"&&x.body&&x.body.data)plain+=b64(x.body.data)+"\n";else if(x.mimeType==="text/html"&&x.body&&x.body.data)html+=b64(x.body.data);(x.parts||[]).forEach(walk)})(p);
+  if(plain.trim())return plain;
+  return html.replace(/<(style|script)[\s\S]*?<\/\1>/gi," ").replace(/<br\s*\/?>|<\/(p|div|tr|li|h\d)>/gi,"\n").replace(/<[^>]+>/g," ").replace(/&nbsp;/g," ").replace(/&amp;/g,"&").replace(/&#39;|&rsquo;/g,"'").replace(/&quot;/g,'"');
+}
+function findLessons(text,sentMs){ // every date in the email, paired with the nearest time after it
+  const T=text.replace(/\s+/g," "),out=[],now=new Date(sentMs||Date.now());const M="(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\\.?";
+  const pats=[[new RegExp("\\b(\\d{1,2})(?:st|nd|rd|th)?\\s+"+M+"(?:,?\\s+(\\d{4}))?(?!\\d)","gi"),m=>[+m[1],MONTHS.indexOf(m[2].toLowerCase()),m[3]]],
+    [new RegExp("\\b"+M+"\\s+(\\d{1,2})(?!\\d)(?:st|nd|rd|th)?(?:,?\\s+(\\d{4}))?","gi"),m=>[+m[2],MONTHS.indexOf(m[1].toLowerCase()),m[3]]],
+    [/\b(20\d{2})[-\/](\d{1,2})[-\/](\d{1,2})\b/g,m=>[+m[3],+m[2]-1,m[1]]],
+    [/\b(\d{1,2})[\/.](\d{1,2})[\/.](20\d{2}|\d{2})\b/g,m=>[+m[1],+m[2]-1,m[3].length===2?"20"+m[3]:m[3]]]];
+  const TM=/\b(\d{1,2})(?:[:h](\d{2}))?\s*(am|pm|a\.m\.|p\.m\.)?(?![\d\/.-])/gi;
+  for(const[re,f]of pats){let m;while((m=re.exec(T))){
+    const[d,mo,y]=f(m);if(!(d>=1&&d<=31&&mo>=0&&mo<=11))continue;
+    let yr=y?+y:now.getFullYear();if(!y&&new Date(yr,mo,d)<new Date(now.getTime()-60*864e5))yr++;
+    const after=T.slice(m.index+m[0].length,m.index+m[0].length+90);let t=null,tm;TM.lastIndex=0;
+    while((tm=TM.exec(after))){if(!tm[2]&&!tm[3])continue;let h=+tm[1],mi=+(tm[2]||0);const ap=(tm[3]||"").replace(/\./g,"").toLowerCase();if(ap==="pm"&&h<12)h+=12;if(ap==="am"&&h===12)h=0;if(h<24&&mi<60){t=String(h).padStart(2,"0")+":"+String(mi).padStart(2,"0");break}}
+    out.push({day:yr+"-"+String(mo+1).padStart(2,"0")+"-"+String(d).padStart(2,"0"),time:t});
+  }}
+  return out;
+}
+async function gLessons(){
+  const list=await gApi("https://gmail.googleapis.com/gmail/v1/users/me/messages?maxResults=25&q="+encodeURIComponent(LESSON_Q));
+  const msgs=await Promise.all((list.messages||[]).map(x=>gApi(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${x.id}?format=full`).catch(()=>null)));
+  const td=ld(),map=new Map();
+  msgs.filter(Boolean).sort((a,b)=>+a.internalDate-+b.internalDate).forEach(m=>{ // oldest first, so a later cancellation wins
+    const sub=hdr(m,"Subject")||"Cape Sports lesson",txt=sub+"\n"+bodyText(m.payload),cancel=/cancel+ed|cancellation/i.test(sub+" "+(m.snippet||""));
+    const seen=new Set();findLessons(txt,+m.internalDate).forEach(l=>{
+      if(l.day<td||!l.time)return;const k=l.day+" "+l.time;if(seen.has(k))return;seen.add(k);
+      if(cancel){map.delete(k);return}
+      const d=new Date(l.day+"T"+l.time+":00+02:00");
+      map.set(k,{title:sub.replace(/^(re|fwd?):\s*/i,""),cal:"Cape Sports email",day:l.day,time:l.time,ts:d.getTime(),lesson:true,where:"",link:"https://mail.google.com/mail/u/0/#all/"+m.threadId});
+    });
+  });
+  G.les=[...map.values()];G.lesAt=Date.now();renderCal();
+}
+function allCal(){const keys=new Set(G.cal.filter(x=>x.lesson).map(x=>x.day+" "+x.time));return [...G.cal,...G.les.filter(x=>!keys.has(x.day+" "+x.time))].sort((a,b)=>a.ts-b.ts)}
+
 async function gLoad(force){
   if(!gOk()){gUi();return}
-  try{await Promise.all([(force||Date.now()-G.mailAt>5*6e4)&&gMail(),(force||Date.now()-G.calAt>5*6e4)&&gCal()])}
+  try{await Promise.all([(force||Date.now()-G.mailAt>5*6e4)&&gMail(),(force||Date.now()-G.calAt>5*6e4)&&gCal().catch(()=>{}),(force||Date.now()-G.lesAt>5*6e4)&&gLessons().catch(()=>{})])}
   catch(e){if(e.message!=="signin")$("#mailMsg").textContent=e.message+". Try Refresh."}
 }
 async function mailSpeech(detail){
@@ -709,7 +751,7 @@ async function mailSpeech(detail){
 async function calSpeech(){
   if(!gOk())return store.get("gOn",false)?"Reconnect Google and I'll check your lessons.":"Connect Google and I'll read your lessons from your calendar.";
   try{await gLoad()}catch(e){}
-  const td=ld(),today=G.cal.filter(x=>x.day===td),les=today.filter(x=>x.lesson),other=today.filter(x=>!x.lesson),nextL=G.cal.find(x=>x.lesson&&x.day>td);
+  const all=allCal(),td=ld(),today=all.filter(x=>x.day===td),les=today.filter(x=>x.lesson),other=today.filter(x=>!x.lesson),nextL=all.find(x=>x.lesson&&x.day>td);
   let out=les.length?"You have "+les.length+" kite lesson"+(les.length>1?"s":"")+" today: "+les.map(x=>x.time+", "+x.title).join(". ")+". ":"No kite lessons today. ";
   if(other.length)out+="Also on the calendar: "+other.slice(0,4).map(x=>x.time+", "+x.title).join(". ")+". ";
   if(!les.length&&nextL)out+="Next lesson is "+new Date(nextL.ts).toLocaleDateString("en-ZA",{weekday:"long",timeZone:TZ})+" at "+nextL.time+".";
