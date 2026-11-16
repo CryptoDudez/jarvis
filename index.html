@@ -14,6 +14,7 @@
   color-scheme:dark;
 }
 *{box-sizing:border-box}
+[hidden]{display:none!important}
 html,body{margin:0;background:var(--bg);color:var(--ice)}
 body{font:14px/1.45 var(--f-body);min-height:100vh;padding:env(safe-area-inset-top,0px) max(16px,env(safe-area-inset-right,0px)) calc(24px + env(safe-area-inset-bottom,0px)) max(16px,env(safe-area-inset-left,0px));
   background:radial-gradient(ellipse at 50% 18%,rgba(41,200,255,.10),transparent 55%),var(--bg)}
@@ -75,6 +76,11 @@ input,select{width:100%;background:#030b14;color:var(--ice);border:1px solid var
 .pile{font:600 9px/1 var(--f-mono);letter-spacing:.12em;text-transform:uppercase;padding:3px 6px;border:1px solid currentColor;margin-right:6px;vertical-align:1px}
 .mail{display:block;padding:8px 0;border-top:1px solid rgba(15,42,66,.7);color:var(--ice);text-decoration:none;min-width:0}.mail:first-child{border-top:0}.mail:hover b{color:var(--cyan)}
 .mail .mu{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tabs{display:flex;gap:6px;flex-wrap:wrap}.tabs button{min-height:32px;padding:8px 10px;font-size:10px}.tabs button.on{background:var(--cyan);color:var(--bg)}
+.ev{display:flex;gap:10px;align-items:flex-start;padding:9px 0;border-top:1px solid rgba(15,42,66,.7)}.ev:first-child{border-top:0}
+.ev .when{font-family:var(--f-mono);color:var(--cyan);min-width:4.6em;font-size:12.5px}.ev .what{flex:1;min-width:0}
+.ev .acts{display:flex;gap:4px}.ev .acts button{min-height:28px;padding:5px 8px;font-size:9px}
+.dayh{font:600 10px/1 var(--f-mono);letter-spacing:.14em;text-transform:uppercase;color:var(--mu);margin:12px 0 2px}
 .todo{border-left:2px solid var(--warn);padding:6px 0 6px 10px;margin:6px 0;color:var(--mu);font-size:12.5px}
 /* alarm overlay */
 #wake{position:fixed;inset:0;z-index:50;background:radial-gradient(circle at 50% 40%,rgba(41,200,255,.25),transparent 60%),var(--bg);display:grid;place-items:center;text-align:center;padding:24px}
@@ -204,6 +210,21 @@ input,select{width:100%;background:#030b14;color:var(--ice);border:1px solid var
         <button type="submit" class="full">Confirm booking</button>
       </form>
       <div class="mu" id="bookMsg" style="margin-top:8px">Jarvis fills this in from your voice. Nothing is booked until you tap Confirm.</div>
+    </div>
+
+    <div class="panel" id="calP">
+      <div class="ph"><h2>Calendar</h2><span class="chip off" id="calChip">Connect Google</span></div>
+      <div class="tabs" role="tablist"><button type="button" class="ghost on" data-r="0">Today</button><button type="button" class="ghost" data-r="1">Tomorrow</button><button type="button" class="ghost" data-r="7">This week</button></div>
+      <div class="list" id="evList" style="margin-top:8px"></div>
+      <form class="form" id="evF" style="margin-top:12px">
+        <input id="evT" placeholder="What, e.g. Kite lesson with Tom" class="full" aria-label="Event title">
+        <input id="evD" type="date" aria-label="Date"><input id="evS" type="time" value="10:00" aria-label="Start time">
+        <select id="evL" aria-label="Duration"><option value="30">30 min</option><option value="60" selected>1 hour</option><option value="90">1.5 hours</option><option value="120">2 hours</option><option value="180">3 hours</option></select>
+        <input id="evW" placeholder="Where (optional)" aria-label="Location">
+        <button type="submit" class="full" id="evSave">Add to calendar</button>
+      </form>
+      <button type="button" class="ghost" id="evCancel" hidden style="margin-top:8px">Cancel edit</button>
+      <div class="mu" id="evMsg" style="margin-top:8px">Say "Hey Jarvis, add a lesson with Tom tomorrow at 10am to my calendar".</div>
     </div>
   </section>
 
@@ -385,17 +406,19 @@ document.querySelectorAll(".hint button").forEach(b=>b.onclick=()=>{$("#heard").
 /* ===== brain (rule-based until the AI brain is connected) ===== */
 async function handle(raw){
   const t=raw.toLowerCase();
+  const calWord=/calendar|lesson|meeting|appointment|event|reminder/.test(t);
+  if(/\b(add|put|create|schedule|set up|book in|pencil in)\b/.test(t)&&calWord&&!/\bwash\b/.test(t))return cmdCal(raw);
   if(/\b(book|schedule)\b/.test(t))return cmdBook(raw);
   if(/good morning|briefing|wake/.test(t))return briefing();
-  if(/lesson|calendar|appointment|meeting/.test(t))return say(await calSpeech());
+  if(/lesson|calendar|appointment|meeting/.test(t)&&!/\bwash/.test(t))return say(await calSpeech(t,/lesson/.test(t)&&!/calendar/.test(t)));
   if(/e-?mail|inbox|\bmail\b|pay|bill|invoice/.test(t))return say(await mailSpeech(true));
   if(/wind|weather|kite|rain|temperature|hot|cold/.test(t))return say(wxSpeech());
   if(/easy lover|music|song|play/.test(t)){say("Playing Easy Lover.");return openSong()}
   if(/money|income|made|earn|revenue|profit/.test(t))return say(incomeSpeech());
-  if(/today|schedule|wash|booking|on for/.test(t)){await say(todaySpeech());return say(await calSpeech())}
+  if(/today|tomorrow|this week|what'?s on|busy|free|schedule|wash|booking|on for|monday|tuesday|wednesday|thursday|friday|saturday|sunday/.test(t)){const w=todaySpeech(t);if(w)await say(w);return say(await calSpeech(t))}
   if(/\btime\b/.test(t))return say("It's "+new Date().toLocaleTimeString("en-ZA",{hour:"2-digit",minute:"2-digit",timeZone:TZ})+".");
   if(/thank/.test(t))return say("Always, sir.");
-  return say("I can't do that one yet. Right now I handle the weather, your schedule, lessons, emails, income, bookings and your wake-up. More is coming.");
+  return say("I can't do that one yet. Right now I handle the weather, your schedule, lessons, calendar, emails, income, bookings and your wake-up. More is coming.");
 }
 function openSong(){const w=window.open(SONG,"_blank");if(!w)location.href=SONG}
 
@@ -483,7 +506,9 @@ function renderIncome(){
 }
 $("#kF").onsubmit=e=>{e.preventDefault();const a=+$("#kA").value;if(!(a>0))return toast("Enter an amount.");kite.push({id:Date.now().toString(36),a,d:$("#kD").value||ld(),n:$("#kN").value.trim()});store.set("kite",kite);$("#kA").value="";$("#kN").value="";renderIncome();toast("Kite payment logged.")};
 function incomeSpeech(){const mo=ld().slice(0,7),k=kiteSum(mo);if(!saOn)return "Kitesurfing has brought in "+R(k)+" this month. Connect Sleek Auto and I'll add the washes.";const s=sleekShare(mo);return "This month: Sleek Auto did "+R(s.rev)+" from "+s.n+" washes, your share is "+R(s.mine)+". Kitesurfing adds "+R(k)+". Total "+R(s.mine+k)+"."}
-function todaySpeech(){if(!saOn)return "Connect Sleek Auto and I'll read out today's washes.";const l=washes.filter(w=>w.date===ld()&&!w.done).sort((x,y)=>(x.time||"").localeCompare(y.time||""));return l.length?"You have "+l.length+" wash"+(l.length>1?"es":"")+" today. "+l.map(w=>w.time+", "+(w.client||"a client")+" at "+w.address).join(". ")+".":"No washes booked for today."}
+function todaySpeech(q){if(!saOn)return "";const r=askRange(q||""),day=r.next?ld():r.from,lbl=r.next?"today":r.label;
+  if(r.days>1){const n=washes.filter(w=>!w.done&&inRange({day:w.date},r)).length;return n?"Sleek Auto has "+n+" wash"+(n>1?"es":"")+" booked "+lbl+".":"No washes booked "+lbl+"."}
+  const l=washes.filter(w=>w.date===day&&!w.done).sort((x,y)=>(x.time||"").localeCompare(y.time||""));return l.length?"You have "+l.length+" wash"+(l.length>1?"es ":" ")+lbl+". "+l.map(w=>w.time+", "+(w.client||"a client")+" at "+w.address).join(". ")+".":"No washes booked "+lbl+"."}
 
 /* ===== weather ===== */
 let wx=null;const WMO={0:"Clear",1:"Mostly clear",2:"Partly cloudy",3:"Overcast",45:"Fog",48:"Fog",51:"Light drizzle",53:"Drizzle",55:"Heavy drizzle",61:"Light rain",63:"Rain",65:"Heavy rain",80:"Showers",81:"Showers",82:"Heavy showers",95:"Thunderstorm"};
@@ -512,7 +537,7 @@ function wxSpeech(){if(!wx)return "I can't reach the weather service right now."
 const WAKE=["Rise and shine, Hayden. The empire doesn't build itself.","Good morning, sir. Systems are online and the wind is waiting.","Wake up, Hayden. Three businesses, one legend. Let's go.","Morning, boss. Coffee first, then we take over the day.","Up and at it, Hayden. Today's a good day to stack wins."];
 async function briefing(){
   const line=WAKE[Math.floor(Math.random()*WAKE.length)];
-  await gFresh();await say(line);await say(wxSpeech());await say(todaySpeech());
+  await gFresh();await say(line);await say(wxSpeech());{const w=todaySpeech();if(w)await say(w)}
   await say(await calSpeech());await say(await mailSpeech(false));
 }
 $("#morningBtn").onclick=briefing;
@@ -575,7 +600,7 @@ function stopRing(){ringing=false;clearInterval(rampT);clearInterval(beepT);beep
 $("#codeF").onsubmit=async e=>{e.preventDefault();if($("#codeI").value.trim()!==code){$("#codeMsg").textContent="Wrong code. Look closer.";$("#codeI").value="";return}
   stopRing();armed=false;updArm();$("#wake").hidden=true;try{document.fullscreenElement&&document.exitFullscreen()}catch(e){}
   const fresh=gFresh(); // the code entry counts as a click, so Google can refresh its sign-in here
-  await say($("#wakeP").textContent);await say(wxSpeech());await say(todaySpeech());await fresh;
+  await say($("#wakeP").textContent);await say(wxSpeech());{const w=todaySpeech();if(w)await say(w)}await fresh;
   await say(await calSpeech());await say(await mailSpeech(false));await say("Let's get it, Hayden.");if(hf.on)hfResume()};
 function checkAlarm(){
   if(!armed||ringing)return;const d=nowMin()-alarmAt();
@@ -624,13 +649,13 @@ updArm();loadYT();
 
 /* ===== Google: Gmail triage + Calendar (read-only) ===== */
 const G_CLIENT="608274672565-n7gbjjkbh5ocqds20adsv8lqm05n51ls.apps.googleusercontent.com";
-const G_SCOPES="https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/calendar.readonly";
+const G_SCOPES="https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/calendar.readonly https://www.googleapis.com/auth/calendar.events";
 const G={tok:store.get("gTok",null),client:null,wait:null,mail:[],cal:[],les:[],mailAt:0,calAt:0,lesAt:0};
 const gOk=()=>G.tok&&G.tok.exp>Date.now()+60000;
 function gInit(){if(G.client||!(window.google&&google.accounts&&google.accounts.oauth2))return!!G.client;
   G.client=google.accounts.oauth2.initTokenClient({client_id:G_CLIENT,scope:G_SCOPES,callback:r=>{
     if(r.error){G.wait&&G.wait(false);G.wait=null;gUi(r.error==="access_denied"?"You said no to Google access.":"Google sign-in didn't finish.");return}
-    G.tok={t:r.access_token,exp:Date.now()+(+r.expires_in||3600)*1000};store.set("gTok",G.tok);store.set("gOn",true);G.wait&&G.wait(true);G.wait=null;gUi();gLoad()},
+    G.tok={t:r.access_token,exp:Date.now()+(+r.expires_in||3600)*1000,scope:r.scope||""};store.set("gTok",G.tok);store.set("gOn",true);G.wait&&G.wait(true);G.wait=null;gUi();gLoad()},
     error_callback:()=>{G.wait&&G.wait(false);G.wait=null;gUi("The Google pop-up was closed or blocked. Allow pop-ups for Jarvis and try again.")}});return true}
 function gSignIn(first){ // must run from a click
   if(!gInit()){gUi("Google sign-in is still loading. Try again in a few seconds.");return Promise.resolve(false)}
@@ -641,6 +666,7 @@ function gSignIn(first){ // must run from a click
 function gFresh(){return gOk()||!store.get("gOn",false)?Promise.resolve(gOk()):gSignIn(false)}
 document.addEventListener("click",e=>{if(store.get("gOn",false)&&!gOk()&&!G.wait&&e.target.id!=="gBtn")gSignIn(false)},true); // quietly renew the hourly Google sign-in on your next click
 $("#gBtn").onclick=()=>gSignIn(!store.get("gOn",false));
+const canWrite=()=>gOk()&&/calendar\.events|auth\/calendar(\s|$)/.test(G.tok.scope||"");
 $("#mailRefresh").onclick=()=>gLoad(true);
 function gUi(err){
   const on=gOk();$("#gConnect").hidden=on;$("#mailBox").hidden=!on;
@@ -648,11 +674,12 @@ function gUi(err){
   if(!on)$("#gBtn").textContent=store.get("gOn",false)?"Reconnect Google":"Connect Google";
   if(err)$("#gConnect .mu").textContent=err;
 }
-async function gApi(url){
+async function gApi(url,method,body){
   if(!gOk())throw new Error("signin");
-  const r=await fetch(url,{headers:{Authorization:"Bearer "+G.tok.t}});
+  const r=await fetch(url,{method:method||"GET",headers:{Authorization:"Bearer "+G.tok.t,...(body?{"Content-Type":"application/json"}:{})},body:body?JSON.stringify(body):undefined});
   if(r.status===401){G.tok=null;store.set("gTok",null);gUi();throw new Error("signin")}
-  if(!r.ok)throw new Error("Google error "+r.status);return r.json();
+  if(r.status===403&&method)throw new Error("Jarvis isn't allowed to change your calendar yet. Click Allow calendar changes.");
+  if(!r.ok)throw new Error("Google error "+r.status);return r.status===204?{}:r.json();
 }
 const hdr=(m,n)=>((m.payload&&m.payload.headers)||[]).find(h=>h.name.toLowerCase()===n.toLowerCase())?.value||"";
 const fromName=f=>(f.match(/^\s*"?([^"<]+?)"?\s*</)||[])[1]||f.replace(/<.*>/,"").trim()||f;
@@ -681,14 +708,15 @@ function renderMail(){
 const LESSON_RE=/tide|lesson|kite|capesports|cape sports|student|ikiteschool|iko/i;
 async function gCal(){
   const cl=await gApi("https://www.googleapis.com/calendar/v3/users/me/calendarList?minAccessRole=reader");
-  const t0=new Date(ld()+"T00:00:00+02:00"),t1=new Date(t0.getTime()+8*864e5);
+  const t0=new Date(ld()+"T00:00:00+02:00"),t1=new Date(t0.getTime()+15*864e5);G.cals=(cl.items||[]).filter(c=>/owner|writer/.test(c.accessRole));
   const cals=(cl.items||[]).filter(c=>c.selected!==false&&!/holiday|birthdays|week numbers/i.test(c.summary||"")).slice(0,12);
-  const res=await Promise.all(cals.map(c=>gApi(`https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(c.id)}/events?singleEvents=true&orderBy=startTime&maxResults=50&timeMin=${t0.toISOString()}&timeMax=${t1.toISOString()}`).then(r=>(r.items||[]).map(e=>({cal:c.summary||"",e}))).catch(()=>[])));
-  G.cal=res.flat().filter(x=>x.e.status!=="cancelled").map(({cal,e})=>{const st=e.start.dateTime||e.start.date,allDay=!e.start.dateTime;const d=new Date(allDay?st+"T00:00:00+02:00":st);
-    return{title:e.summary||"(busy)",cal,day:ld(d),time:allDay?"All day":d.toLocaleTimeString("en-ZA",{hour:"2-digit",minute:"2-digit",timeZone:TZ}),ts:d.getTime(),lesson:LESSON_RE.test((e.summary||"")+" "+cal+" "+(e.description||"")),where:e.location||""}}).sort((a,b)=>a.ts-b.ts);
+  const res=await Promise.all(cals.map(c=>gApi(`https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(c.id)}/events?singleEvents=true&orderBy=startTime&maxResults=50&timeMin=${t0.toISOString()}&timeMax=${t1.toISOString()}`).then(r=>(r.items||[]).map(e=>({cal:c.primary?"":c.summary||"",calId:c.id,e}))).catch(()=>[])));
+  G.cal=res.flat().filter(x=>x.e.status!=="cancelled").map(({cal,calId,e})=>{const st=e.start.dateTime||e.start.date,allDay=!e.start.dateTime;const d=new Date(allDay?st+"T00:00:00+02:00":st);
+    return{title:e.summary||"(busy)",cal,day:ld(d),time:allDay?"All day":d.toLocaleTimeString("en-ZA",{hour:"2-digit",minute:"2-digit",timeZone:TZ}),ts:d.getTime(),lesson:LESSON_RE.test((e.summary||"")+" "+cal+" "+(e.description||"")),where:e.location||"",id:e.id,calId,allDay,mins:allDay?0:Math.round((new Date(e.end.dateTime||st)-d)/6e4),edit:(G.cals||[]).some(c=>c.id===calId)}}).sort((a,b)=>a.ts-b.ts);
   G.calAt=Date.now();renderCal();
 }
 function renderCal(){
+  renderEv();
   const all=allCal(),td=ld(),today=all.filter(x=>x.day===td),nextL=all.find(x=>x.lesson&&x.day>td);
   $("#calList").innerHTML=(today.map(x=>`<div class="wash"><b>${esc(x.time)}</b>${x.lesson?'<span class="pile" style="color:var(--ok)">lesson</span>':""}${x.link?`<a href="${esc(x.link)}" target="_blank" rel="noopener" style="color:var(--ice)">${esc(x.title)}</a>`:esc(x.title)}${x.where?`<div class="mu">${esc(x.where)}</div>`:""}</div>`).join("")||'<div class="mu">Nothing on your calendar today.</div>')
     +(nextL?`<div class="mu" style="margin-top:6px">Next lesson: ${esc(new Date(nextL.ts).toLocaleDateString("en-ZA",{weekday:"short",day:"numeric",month:"short",timeZone:TZ}))} ${esc(nextL.time)} · ${esc(nextL.title)}</div>`:"");
@@ -748,14 +776,84 @@ async function mailSpeech(detail){
   const list=(a,n)=>a.slice(0,n).map(m=>m.from+(detail?" about "+m.sub:"")).join(", ");
   return (pay.length?pay.length+" to pay: "+list(pay,3)+". ":"")+(ans.length?ans.length+" worth answering: "+list(ans,detail?4:3)+". ":"")+(ign.length?ign.length+" you can ignore.":"");
 }
-async function calSpeech(){
-  if(!gOk())return store.get("gOn",false)?"Reconnect Google and I'll check your lessons.":"Connect Google and I'll read your lessons from your calendar.";
+/* ----- which days a question is about ----- */
+const fmtDay=d=>new Date(d+"T12:00:00+02:00").toLocaleDateString("en-ZA",{weekday:"long",day:"numeric",month:"long",timeZone:TZ});
+function askRange(t){
+  t=t.toLowerCase();
+  if(/next week/.test(t))return{from:addDays(7-((new Date(new Date().toLocaleString("en-US",{timeZone:TZ})).getDay()+6)%7)),days:7,label:"next week"};
+  if(/this week|the week|week ahead|coming days|next few days/.test(t))return{from:ld(),days:7,label:"this week"};
+  if(/next lesson|upcoming/.test(t))return{next:true};
+  const{date}=parseWhen(t.replace(/\bat\s+\d.*$/,""));if(date&&date!==ld())return{from:date,days:1,label:date===addDays(1)?"tomorrow":"on "+fmtDay(date).split(",")[0]};
+  return{from:ld(),days:1,label:"today"};
+}
+const inRange=(x,r)=>{const end=new Date(new Date(r.from+"T12:00:00+02:00").getTime()+(r.days-1)*864e5);return x.day>=r.from&&x.day<=ld(end)};
+async function calSpeech(q,lessonsOnly){
+  if(!gOk())return store.get("gOn",false)?"Reconnect Google and I'll check your calendar.":"Connect Google and I'll read your lessons and calendar.";
   try{await gLoad()}catch(e){}
-  const all=allCal(),td=ld(),today=all.filter(x=>x.day===td),les=today.filter(x=>x.lesson),other=today.filter(x=>!x.lesson),nextL=all.find(x=>x.lesson&&x.day>td);
-  let out=les.length?"You have "+les.length+" kite lesson"+(les.length>1?"s":"")+" today: "+les.map(x=>x.time+", "+x.title).join(". ")+". ":"No kite lessons today. ";
-  if(other.length)out+="Also on the calendar: "+other.slice(0,4).map(x=>x.time+", "+x.title).join(". ")+". ";
-  if(!les.length&&nextL)out+="Next lesson is "+new Date(nextL.ts).toLocaleDateString("en-ZA",{weekday:"long",timeZone:TZ})+" at "+nextL.time+".";
+  const r=askRange(q||""),all=allCal();
+  if(r.next){const n=all.find(x=>x.lesson&&x.ts>Date.now());return n?"Your next lesson is "+fmtDay(n.day)+" at "+n.time+": "+n.title+".":"I can't see any upcoming lessons."}
+  const items=all.filter(x=>inRange(x,r)),les=items.filter(x=>x.lesson),other=items.filter(x=>!x.lesson),multi=r.days>1;
+  const line=x=>(multi?fmtDay(x.day).split(",")[0]+" ":"")+x.time+", "+x.title;
+  let out=les.length?"You have "+les.length+" kite lesson"+(les.length>1?"s ":" ")+r.label+": "+les.map(line).join(". ")+". ":"No kite lessons "+r.label+". ";
+  if(other.length&&!lessonsOnly)out+="Also on the calendar: "+other.slice(0,multi?6:4).map(line).join(". ")+". ";
+  if(!les.length){const n=all.find(x=>x.lesson&&x.ts>Date.now());if(n)out+="Your next lesson is "+fmtDay(n.day)+" at "+n.time+".";}
   return out.trim();
+}
+
+/* ----- calendar panel: view, add, edit, delete ----- */
+let evRange=0,evEdit=null;
+document.querySelectorAll("#calP .tabs button").forEach(b=>b.onclick=()=>{evRange=+b.dataset.r;document.querySelectorAll("#calP .tabs button").forEach(x=>x.classList.toggle("on",x===b));renderEv()});
+function renderEv(){
+  const on=gOk();$("#calChip").textContent=!on?"Connect Google":canWrite()?"Live · you're in control":"Read-only";$("#calChip").className="chip "+(!on?"off":canWrite()?"live":"wait");
+  if(!on){$("#evList").innerHTML='<div class="mu">Connect Google in the Inbox panel first.</div>';return}
+  const r=evRange===7?{from:ld(),days:7}:{from:addDays(evRange),days:1},items=allCal().filter(x=>inRange(x,r));
+  let h="",lastDay="";
+  items.forEach((x,i)=>{if(r.days>1&&x.day!==lastDay){h+=`<div class="dayh">${esc(fmtDay(x.day))}</div>`;lastDay=x.day}
+    h+=`<div class="ev"><span class="when">${esc(x.time)}</span><div class="what">${x.lesson?'<span class="pile" style="color:var(--ok)">lesson</span>':""}${x.link?`<a href="${esc(x.link)}" target="_blank" rel="noopener" style="color:var(--ice)">${esc(x.title)}</a>`:esc(x.title)}${x.where?`<div class="mu">${esc(x.where)}</div>`:""}${x.cal&&!x.link?`<div class="mu">${esc(x.cal)}</div>`:""}</div><div class="acts">`+
+      (x.id&&x.edit&&canWrite()?`<button class="ghost" data-ed="${i}" type="button" aria-label="Edit ${esc(x.title)}">Edit</button><button class="ghost" data-dl="${i}" type="button" aria-label="Delete ${esc(x.title)}">✕</button>`:"")+
+      (!x.id&&canWrite()?`<button class="ghost" data-add="${i}" type="button">+ Calendar</button>`:"")+`</div></div>`});
+  $("#evList").innerHTML=(h||`<div class="mu">Nothing on ${evRange===0?"today":evRange===1?"tomorrow":"this week"}.</div>`)+(!canWrite()?'<button type="button" id="calAllow" style="margin-top:10px">Allow calendar changes</button>':"");
+  $("#calAllow")&&($("#calAllow").onclick=()=>gSignIn(true));
+  document.querySelectorAll("[data-ed]").forEach(b=>b.onclick=()=>startEdit(items[+b.dataset.ed]));
+  document.querySelectorAll("[data-dl]").forEach(b=>b.onclick=()=>{const x=items[+b.dataset.dl];if(b.dataset.sure){delEv(x);return}b.dataset.sure=1;b.textContent="Delete?";b.style.color="var(--bad)";setTimeout(()=>{if(b.isConnected){delete b.dataset.sure;b.textContent="✕";b.style.color=""}},4000)});
+  document.querySelectorAll("[data-add]").forEach(b=>b.onclick=()=>{const x=items[+b.dataset.add];saveEv({title:x.title,day:x.day,time:x.time,mins:120,where:x.where},null)});
+}
+function startEdit(x){evEdit=x;$("#evT").value=x.title;$("#evD").value=x.day;$("#evS").value=x.allDay?"09:00":x.time;$("#evL").value=String([30,60,90,120,180].reduce((a,b)=>Math.abs(b-x.mins)<Math.abs(a-x.mins)?b:a,60));$("#evW").value=x.where||"";$("#evSave").textContent="Save changes";$("#evCancel").hidden=false;$("#evF").scrollIntoView({behavior:"smooth",block:"center"});$("#evT").focus()}
+function endEdit(){evEdit=null;$("#evF").reset();$("#evD").value=ld();$("#evSave").textContent="Add to calendar";$("#evCancel").hidden=true}
+$("#evCancel").onclick=endEdit;
+function evBody(v){const st=new Date(v.day+"T"+v.time+":00+02:00"),en=new Date(st.getTime()+(+v.mins||60)*6e4),iso=d=>ld(d)+"T"+d.toLocaleTimeString("en-GB",{hour:"2-digit",minute:"2-digit",timeZone:TZ})+":00";
+  return{summary:v.title,location:v.where||undefined,start:{dateTime:iso(st),timeZone:TZ},end:{dateTime:iso(en),timeZone:TZ}}}
+async function saveEv(v,ed){
+  if(!canWrite()){$("#evMsg").textContent="Click Allow calendar changes first.";return false}
+  try{
+    if(ed)await gApi(`https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(ed.calId)}/events/${encodeURIComponent(ed.id)}`,"PATCH",evBody(v));
+    else await gApi("https://www.googleapis.com/calendar/v3/calendars/primary/events","POST",evBody(v));
+    $("#evMsg").textContent=(ed?"Updated: ":"Added: ")+v.title+", "+fmtDay(v.day)+" at "+v.time+".";await gCal();return true;
+  }catch(e){$("#evMsg").textContent=e.message==="signin"?"Google sign-in expired. Click anywhere and try again.":e.message;return false}
+}
+async function delEv(x){
+  try{await gApi(`https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(x.calId)}/events/${encodeURIComponent(x.id)}`,"DELETE");$("#evMsg").textContent="Deleted: "+x.title+".";await gCal()}
+  catch(e){$("#evMsg").textContent=e.message}
+}
+$("#evF").onsubmit=async e=>{e.preventDefault();const v={title:$("#evT").value.trim(),day:$("#evD").value,time:$("#evS").value,mins:+$("#evL").value,where:$("#evW").value.trim()};
+  if(!v.title||!v.day||!v.time){$("#evMsg").textContent="Add a title, date and time.";return}
+  const ed=evEdit;if(await saveEv(v,ed)){endEdit();say((ed?"Updated. ":"Done. ")+v.title+" is in your calendar for "+fmtDay(v.day)+" at "+v.time+".")}};
+/* voice: "add a lesson with Tom tomorrow at 10am to my calendar" */
+function cmdCal(raw){
+  const{date,time}=parseWhen(raw);
+  let title=raw.replace(/^.*?\b(?:add|put|create|schedule|set up|book in|pencil in)\b\s*/i,"")
+    .replace(/\b(?:to|in|on|into)\s+(?:my\s+)?calendar\b/gi,"").replace(/\b(?:today|tomorrow|(?:on\s+|this\s+|next\s+)?(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday))\b/gi,"")
+    .replace(/\bat\s+\d{1,2}(?:[:h.]\d{2})?\s*(?:am|pm|a\.m\.|p\.m\.)?|\b\d{1,2}(?:[:h.]\d{2})?\s*(?:am|pm|a\.m\.|p\.m\.)|\b\d{1,2}[:h]\d{2}\b/gi,"")
+    .replace(/^(?:a|an|the)\s+/i,"").replace(/\s{2,}/g," ").replace(/[\s,.]+$/,"").trim();
+  title=title?title[0].toUpperCase()+title.slice(1):"";
+  const mins=/lesson/i.test(title)?120:60;
+  endEdit();$("#evT").value=title;$("#evD").value=date||ld();if(time)$("#evS").value=time;$("#evL").value=String(mins);
+  $("#calP").scrollIntoView({behavior:"smooth",block:"center"});
+  if(!canWrite())return say(gOk()?"I need permission to change your calendar first. Click Allow calendar changes.":"Connect Google first, then I can manage your calendar.");
+  if(!title||!time)return say("I've started the event. "+(!title?"What's it called? ":"")+(!time?"What time? ":"")+"Fill in the rest and tap Add.");
+  return say("Adding "+title+", "+fmtDay($("#evD").value)+" at "+$("#evS").value+". Say yes to confirm.").then(()=>new Promise(res=>listenOnce(async a=>{
+    if(/\b(yes|yeah|yep|confirm|do it|go ahead|sure|correct)\b/i.test(a)){const v={title,day:$("#evD").value,time:$("#evS").value,mins,where:""};if(await saveEv(v,null)){endEdit();await say("Done. It's in your calendar.")}else await say("That didn't save. Check the calendar panel.")}
+    else await say("Okay, I haven't added it. You can still tap Add to calendar.");res()},6000)));
 }
 gUi();(function waitG(n){if(gInit()){if(gOk())gLoad()}else if(n<40)setTimeout(()=>waitG(n+1),250)})(0);
 setInterval(()=>{if(gOk())gLoad();else gUi()},5*6e4);
@@ -797,7 +895,7 @@ function tick(){const n=new Date();$("#clk").textContent=n.toLocaleTimeString("e
 })();
 
 /* ===== boot ===== */
-$("#bDt").value=ld();$("#kD").value=ld();fillSvc();renderIncome();tick();setInterval(tick,5000);
+$("#bDt").value=ld();$("#kD").value=ld();$("#evD").value=ld();fillSvc();renderIncome();tick();setInterval(tick,5000);
 loadWx();setInterval(loadWx,30*60*1000);saBoot();
 const h=new Date(new Date().toLocaleString("en-US",{timeZone:TZ})).getHours();
 $("#say").textContent=(h<12?"Good morning":h<18?"Good afternoon":"Good evening")+", "+NAME+". All systems online.";
