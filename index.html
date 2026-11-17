@@ -53,7 +53,7 @@ input,select{width:100%;background:#030b14;color:var(--ice);border:1px solid var
 .form{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.form .full{grid-column:1/-1}
 /* core */
 .orbwrap{position:relative;display:grid;place-items:center;padding:6px 0 0}
-#orb{width:min(100%,420px);aspect-ratio:1;max-width:100%;display:block}
+#orb{width:min(100%,420px);aspect-ratio:1;max-width:100%;display:block;filter:drop-shadow(0 0 10px rgba(41,200,255,.55))}
 .state{font:600 12px/1 var(--f-hud);letter-spacing:.32em;text-transform:uppercase;color:var(--cyan);text-align:center;margin-top:-4px}
 .say{min-height:3.2em;text-align:center;font-size:15px;color:var(--ice);margin:10px auto 0;max-width:46ch;text-wrap:balance}
 .heard{text-align:center;font:12px var(--f-mono);color:var(--mu);min-height:1.4em}
@@ -1013,42 +1013,53 @@ function vizRead(t){ // -> {lvl 0..1, bins[64] 0..1, wave[64] -1..1}
   return{lvl,bins,wave};
 }
 (function(){
-  const cv=$("#orb"),x=cv.getContext("2d"),S=cv.width,C=S/2,still=matchMedia("(prefers-reduced-motion: reduce)").matches;
-  let t=0,L=0,prevL=0,rot=[0,0,0],waves=[],B=new Array(64).fill(0);
+  // Drawn in an 840×840 design space, scaled to the real on-screen size. The glow comes from one
+  // CSS drop-shadow (cheap) instead of canvas shadowBlur (very expensive), and drawing pauses while
+  // the core is off-screen or the tab is hidden, so scrolling the rest of Jarvis stays smooth.
+  const cv=$("#orb"),x=cv.getContext("2d"),S=840,C=S/2,still=matchMedia("(prefers-reduced-motion: reduce)").matches;
+  let t=0,L=0,prevL=0,rot=[0,0,0],waves=[],B=new Array(64).fill(0),k=1,visible=true,last=0,running=false;
+  function size(){const px=Math.round(Math.min(840,(cv.clientWidth||420)*Math.min(devicePixelRatio||1,2)));if(px&&cv.width!==px){cv.width=cv.height=px}k=cv.width/S}
+  size();addEventListener("resize",size);
   const col=()=>mode==="listening"?"110,236,255":"41,200,255";
-  const glow=(b,a)=>{x.shadowBlur=b;x.shadowColor=`rgba(${col()},${a})`};
   function arc(r,a0,a1,w,a){x.beginPath();x.arc(C,C,r,a0,a1);x.lineWidth=w;x.strokeStyle=`rgba(${col()},${a})`;x.stroke()}
   function ticks(r,n,len,w,a,rt,skip){x.strokeStyle=`rgba(${col()},${a})`;x.lineWidth=w;x.beginPath();for(let i=0;i<n;i++){if(skip&&skip(i))continue;const g=rt+i/n*Math.PI*2;x.moveTo(C+Math.cos(g)*r,C+Math.sin(g)*r);x.lineTo(C+Math.cos(g)*(r+len),C+Math.sin(g)*(r+len))}x.stroke()}
-  function frame(){
-    const v=vizRead(t);L+= (v.lvl-L)*(v.lvl>L?.5:.12);for(let i=0;i<64;i++)B[i]+=(v.bins[i]-B[i])*(v.bins[i]>B[i]?.6:.15);
+  function draw(){
+    const v=vizRead(t);L+=(v.lvl-L)*(v.lvl>L?.5:.12);for(let i=0;i<64;i++)B[i]+=(v.bins[i]-B[i])*(v.bins[i]>B[i]?.6:.15);
     if(!still&&L-prevL>.09&&L>.25)waves.push({r:150,a:.7});prevL=L;
     const sp=1+L*4;rot[0]+=.004*sp;rot[1]-=.008*sp;rot[2]+=.006*sp;
-    x.setTransform(1,0,0,1,0,0);x.clearRect(0,0,S,S);
-    const sc=1+L*(still?.015:.045);x.setTransform(sc,0,0,sc,C*(1-sc),C*(1-sc));
-    glow(22,.9);
+    x.setTransform(1,0,0,1,0,0);x.clearRect(0,0,cv.width,cv.height);
+    const sc=(1+L*(still?.015:.045))*k;x.setTransform(sc,0,0,sc,C*(k-sc),C*(k-sc));
     x.lineWidth=3;x.strokeStyle=`rgba(${col()},.55)`;x.beginPath();[[-1,0],[1,0],[0,-1],[0,1]].forEach(([a,b])=>{x.moveTo(C+a*352,C+b*352);x.lineTo(C+a*(402+L*14),C+b*(402+L*14))});x.stroke();
     for(let i=0;i<4;i++)arc(370,rot[0]+i*Math.PI/2+.12,rot[0]+i*Math.PI/2+Math.PI/2-.12,5,.6+L*.4);
     ticks(340,90,10+L*8,2,.3+L*.4,-rot[0]*.7);
     arc(300,rot[1],rot[1]+Math.PI*1.25,16+L*10,.9);arc(300,rot[1]+Math.PI*1.35,rot[1]+Math.PI*1.55,16,.6);arc(300,rot[1]+Math.PI*1.65,rot[1]+Math.PI*1.9,16,.35);
     arc(276,0,Math.PI*2,2,.4+L*.4);
-    // spectrum ring: real voice frequencies, mirrored around the circle
-    glow(10+L*14,.8);x.lineWidth=3.5;
-    for(let i=0;i<128;i++){const k=i<64?i:127-i,g=rot[2]+i/128*Math.PI*2-Math.PI/2,amp=6+B[k]*78;
-      x.strokeStyle=`rgba(${col()},${.3+.7*Math.min(1,B[k]*1.4)})`;x.beginPath();x.moveTo(C+Math.cos(g)*212,C+Math.sin(g)*212);x.lineTo(C+Math.cos(g)*(212+amp),C+Math.sin(g)*(212+amp));x.stroke()}
-    glow(18,.9);
+    // spectrum ring, drawn in 4 strokes (one per brightness level)
+    x.lineWidth=3.5;
+    for(let q=0;q<4;q++){x.beginPath();let any=false;
+      for(let i=0;i<128;i++){const kk=i<64?i:127-i,lvl=Math.min(3,Math.floor(Math.min(1,B[kk]*1.4)*4));if(lvl!==q)continue;any=true;
+        const g=rot[2]+i/128*Math.PI*2-Math.PI/2,amp=6+B[kk]*78;x.moveTo(C+Math.cos(g)*212,C+Math.sin(g)*212);x.lineTo(C+Math.cos(g)*(212+amp),C+Math.sin(g)*(212+amp))}
+      if(any){x.strokeStyle=`rgba(${col()},${.3+.7*(q+.5)/4})`;x.stroke()}}
     arc(196,-rot[2]*1.4,-rot[2]*1.4+Math.PI*1.6,8,.8);
     ticks(168,60,6,2,.55,rot[2]*2,i=>i%5===0);
     // voice waveform ring
-    x.beginPath();for(let i=0;i<=128;i++){const k=i%128,w=v.wave[k<64?k:127-k]||0,g=i/128*Math.PI*2,r=140+w*60*Math.min(1,L*2.2);i?x.lineTo(C+Math.cos(g)*r,C+Math.sin(g)*r):x.moveTo(C+Math.cos(g)*r,C+Math.sin(g)*r)}
+    x.beginPath();for(let i=0;i<=128;i++){const kk=i%128,w=v.wave[kk<64?kk:127-kk]||0,g=i/128*Math.PI*2,r=140+w*60*Math.min(1,L*2.2);i?x.lineTo(C+Math.cos(g)*r,C+Math.sin(g)*r):x.moveTo(C+Math.cos(g)*r,C+Math.sin(g)*r)}
     x.lineWidth=3;x.strokeStyle=`rgba(${col()},.95)`;x.stroke();
-    // shock waves on loud syllables
     waves=waves.filter(w=>w.a>.03);waves.forEach(w=>{arc(w.r,0,Math.PI*2,2,w.a);w.r+=7;w.a*=.93});
-    // core
     const R=118+L*70,g=x.createRadialGradient(C,C,0,C,C,R);g.addColorStop(0,`rgba(230,250,255,${Math.min(1,.5+L*.8)})`);g.addColorStop(.18,`rgba(${col()},${.3+L*.5})`);g.addColorStop(1,`rgba(${col()},0)`);
-    x.shadowBlur=0;x.fillStyle=g;x.beginPath();x.arc(C,C,R,0,Math.PI*2);x.fill();
-    t++;requestAnimationFrame(frame);
+    x.fillStyle=g;x.beginPath();x.arc(C,C,R,0,Math.PI*2);x.fill();
+    t++;
   }
-  frame();
+  function loop(ts){
+    if(!visible||document.hidden){running=false;return}
+    const busy=mode==="speaking"||mode==="listening";
+    if(busy||ts-last>=32){last=ts;draw()} // 60 fps while talking/listening, 30 fps at rest
+    requestAnimationFrame(loop);
+  }
+  function start(){if(!running&&visible&&!document.hidden){running=true;requestAnimationFrame(loop)}}
+  if("IntersectionObserver" in window)new IntersectionObserver(es=>{visible=es[0].isIntersecting;if(visible){size();start()}}).observe(cv);
+  document.addEventListener("visibilitychange",start);
+  draw();start();
 })();
 
 /* ===== boot ===== */
