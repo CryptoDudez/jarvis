@@ -6,11 +6,12 @@
   const W = 1080, H = 1920, FPS = 30;
   const STYLES = {
     auto: "Auto (learned)",
+    vintage: "Vintage collage (old money)",
     bwfull: "B&W full-screen moodboard",
     hardcut: "Hard cuts on white",
     bwmood: "B&W photo grid",
     fastcolour: "Fast colour",
-    collage: "Collage pop-in",
+    collage: "Polaroid collage",
     bw2colour: "B&W to colour",
     duo: "Two at once",
   };
@@ -148,17 +149,35 @@
     if (best > 0) { [imgs[0], imgs[best]] = [imgs[best], imgs[0]]; [imgs.paths[0], imgs.paths[best]] = [imgs.paths[best], imgs.paths[0]]; }
     return best >= 0;
   }
+  // Auto: the vintage collage is niche.co's look; 🔥 / 👎 on made videos shifts the mix towards what Hayden likes
+  function styleWeights(L) {
+    const R = store.get("vlabRatings", {}), base = L && L.bw != null && L.bw >= 0.7 ? { vintage: 0.6, bwfull: 0.3, fastcolour: 0.1 } : { vintage: 0.75, bwfull: 0.15, fastcolour: 0.1 };
+    const w = {};
+    for (const k of Object.keys(STYLES)) {
+      if (k === "auto") continue;
+      const r = R[k] || { up: 0, down: 0 };
+      let x = ((base[k] || 0) + 0.3 * r.up) * Math.pow(0.5, r.down);
+      if (r.down >= 2 && r.down > r.up) x = 0;
+      if (x > 0.001) w[k] = x;
+    }
+    return Object.keys(w).length ? w : { vintage: 1 };
+  }
   function chooseStyle(req, L) {
     if (req && req !== "auto") return req;
-    let opts;
-    if (L && L.bw != null && L.bw >= 0.5) opts = [["bwfull", 0.75], ["bw2colour", 0.15], ["bwmood", 0.1]]; // the winners are black and white
-    else if (L) opts = [["fastcolour", 0.55], ["hardcut", 0.2], ["duo", 0.15], ["collage", 0.1]];
-    else { const all = Object.keys(STYLES).filter((k) => k !== "auto" && k !== store.get("vlabLastStyle", "")); return all[Math.floor(Math.random() * all.length)]; }
-    let r = Math.random(); for (const [k, w] of opts) { r -= w; if (r <= 0) return k; } return opts[0][0];
+    const w = styleWeights(L), tot = Object.values(w).reduce((a, b) => a + b, 0);
+    let r = Math.random() * tot; for (const [k, x] of Object.entries(w)) { r -= x; if (r <= 0) return k; } return "vintage";
+  }
+  function rate(name, style, up) {
+    const R = store.get("vlabRatings", {}), M = store.get("vlabMade", {});
+    const prev = M[name] && M[name].rating; R[style] = R[style] || { up: 0, down: 0 };
+    if (prev === "up") R[style].up--; if (prev === "down") R[style].down--;
+    const now = prev === (up ? "up" : "down") ? null : up ? "up" : "down";
+    if (now === "up") R[style].up++; if (now === "down") R[style].down++;
+    M[name] = { style, rating: now }; store.set("vlabRatings", R); store.set("vlabMade", M); return now;
   }
   function plan(style, L, seconds) {
     const bpm = clamp(Math.round((L && L.bpm) || 120), 80, 170), beat = 60 / bpm;
-    const base = { bwfull: 1, hardcut: 1, bwmood: 1, fastcolour: 0.5, collage: 1, bw2colour: 2, duo: 2 }[style];
+    const base = { vintage: 1, bwfull: 1, hardcut: 1, bwmood: 1, fastcolour: 0.5, collage: 1, bw2colour: 2, duo: 2 }[style];
     let shot = base * beat;
     if (L && L.shot) { // follow what works, snapped to the beat
       const beats = [0.5, 1, 2, 4].reduce((a, b) => (Math.abs(b * beat - L.shot) < Math.abs(a * beat - L.shot) ? b : a), 1);
@@ -166,7 +185,7 @@
     }
     const hook = clamp((L && L.hook) || shot, beat * 0.5, shot);
     // build-up then drop: slower cuts before the drop, full speed after (when that's what works)
-    const cutsStyle = !["bwmood", "collage"].includes(style);
+    const cutsStyle = !["bwmood", "collage", "vintage"].includes(style);
     const dropAt = cutsStyle && L && L.drop != null && L.fasterAfterDrop >= 0.5 ? clamp(Math.round(L.drop / beat) * beat, 2 * beat, seconds * 0.45) : null;
     const shots = [{ start: 0, dur: hook, tr: "hard cut" }];
     let t = hook;
@@ -216,10 +235,15 @@
     if (tr === "dip to black" && tt < 0.15) { ctx.fillStyle = `rgba(0,0,0,${1 - tt / 0.15})`; ctx.fillRect(0, 0, W, H); }
     if (text && t >= text.from && t < text.to) hookText(ctx, text, t);
   }
-  function hookText(ctx, T, t) { // TikTok-style caption: bold white with a black outline
+  function hookText(ctx, T, t) { // TikTok-style caption: bold white with a black outline (vintage: plain white, word by word)
     const a = clamp((t - T.from) / 0.15, 0, 1); ctx.save(); ctx.globalAlpha = a;
-    ctx.font = "800 68px Inter, 'Helvetica Neue', Arial, sans-serif"; ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.lineJoin = "round";
-    const words = T.text.split(/\s+/), lines = []; let cur = "";
+    ctx.font = (T.plain ? "700 76px" : "800 68px") + " Inter, 'Helvetica Neue', Arial, sans-serif"; ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.lineJoin = "round";
+    let words = T.text.split(/\s+/);
+    if (T.plain && T.beat) words = words.slice(0, Math.max(1, Math.floor((t - T.from) / T.beat) + 1));
+    if (T.plain) { const lines = [], all = words; let cur = ""; for (const w of all) { const test = cur ? cur + " " + w : w; if (ctx.measureText(test).width > W * 0.84 && cur) { lines.push(cur); cur = w; } else cur = test; } if (cur) lines.push(cur);
+      const lh = 90, y0 = H * T.y - ((lines.length - 1) * lh) / 2; ctx.shadowColor = "rgba(0,0,0,.45)"; ctx.shadowBlur = 14; ctx.fillStyle = "#fff";
+      lines.forEach((l, i) => ctx.fillText(l, W / 2, y0 + i * lh)); ctx.restore(); return; }
+    const lines = []; let cur = "";
     for (const w of words) { const test = cur ? cur + " " + w : w; if (ctx.measureText(test).width > W * 0.84 && cur) { lines.push(cur); cur = w; } else cur = test; }
     if (cur) lines.push(cur);
     const lh = 84, y0 = H * T.y - ((lines.length - 1) * lh) / 2;
@@ -228,13 +252,14 @@
   }
   function endCard(ctx, style, P, t) {
       const k = ease((t - P.end) / 0.35);
-      ctx.fillStyle = style === "hardcut" ? "#fff" : "#000"; ctx.fillRect(0, 0, W, H);
-      ctx.fillStyle = style === "hardcut" ? "#000" : "#fff"; ctx.globalAlpha = k;
+      ctx.fillStyle = style === "hardcut" ? "#fff" : style === "vintage" ? "#e6dec8" : "#000"; ctx.fillRect(0, 0, W, H);
+      ctx.fillStyle = style === "hardcut" ? "#000" : style === "vintage" ? "#2a241b" : "#fff"; ctx.globalAlpha = k;
       ctx.font = "800 120px Inter, 'Helvetica Neue', Arial, sans-serif"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
       ctx.fillText("NICHE.CO", W / 2, H / 2 + (1 - k) * 40); ctx.globalAlpha = 1;
   }
   function content(ctx, style, P, imgs, si, p, rnd) { // one shot of the chosen style
     const n = imgs.length, img = imgs[si % n];
+    if (style === "vintage") { vintage(ctx, P, imgs, si, p, rnd); return; }
     if (style === "bwfull") { // full-screen moodboard edit: one photo at a time, strong B&W, grain and vignette
       const col = P.colour && P.colour.has(si), b = P.bright || 1;
       ctx.filter = col ? `contrast(1.08) saturate(0.9) brightness(${b})` : `grayscale(1) contrast(1.35) brightness(${b})`;
@@ -275,8 +300,38 @@
       cover(ctx, a, -(1 - k) * W * 0.3, 0, W, H / 2 - 6, 1.05); cover(ctx, b, (1 - k) * W * 0.3, H / 2 + 6, W, H / 2 - 6, 1.05);
     }
   }
+  /* Vintage collage — niche.co's old-money moodboard look: a full-screen vintage photo or cream paper
+     behind, photos popping in on the beat and piling up (no borders, no tilt), warm faded film colour, grain. */
+  const PAGE = 7, WARM = "sepia(0.18) saturate(0.92) contrast(0.96)";
+  const vIdx = (page, k) => page * (PAGE + 1) + k; // k = 0 is the page background, 1..PAGE the collage photos
+  function layout(page, rnd) {
+    if (!layout.cache) layout.cache = {};
+    if (layout.cache[page]) return layout.cache[page];
+    const slots = [[0, 0], [1, 0], [0, 1], [1, 1], [0, 2], [1, 2], [0.5, 0.6], [0.5, 1.6]];
+    const order = slots.map((s, i) => [rnd[(page * 5 + i) % rnd.length][0], s]).sort((a, b) => a[0] - b[0]).map((x) => x[1]);
+    return (layout.cache[page] = order.map(([c, r], i) => { const q = rnd[(page * 7 + i * 3) % rnd.length]; return { cx: W * (0.28 + c * 0.44 + (q[0] - 0.5) * 0.12), cy: H * (0.16 + r * 0.3 + (q[1] - 0.5) * 0.08), w: W * (0.38 + q[2] * 0.12) }; }));
+  }
+  function vintage(ctx, P, imgs, si, p, rnd) {
+    const n = imgs.length, page = Math.floor(si / PAGE), first = page * PAGE, img = (i) => imgs[i % n];
+    if (page % 2 === 0) { // full-screen vintage photo behind
+      ctx.filter = WARM + " brightness(0.9)"; cover(ctx, img(vIdx(page, 0)), 0, 0, W, H, 1.06 - 0.04 * Math.min(1, (si - first + p) / PAGE)); ctx.filter = "none";
+    } else { // cream paper with one big photo bleeding off the corner
+      ctx.fillStyle = "#d9d0b6"; ctx.fillRect(0, 0, W, H);
+      ctx.filter = WARM; cover(ctx, img(vIdx(page, 0)), W * 0.38, H * 0.5, W * 0.7, H * 0.55, 1.05); ctx.filter = "none";
+    }
+    const L = layout(page, rnd);
+    for (let k = first; k <= si; k++) {
+      const s = L[(k - first) % L.length], im = img(vIdx(page, 1 + k - first));
+      const sc = Math.min(s.w / im.width, (H * 0.3) / im.height), iw = im.width * sc, ih = im.height * sc;
+      const kp = k === si ? ease(p * 5) : 1, z = 0.9 + 0.1 * kp;
+      ctx.save(); ctx.globalAlpha = Math.min(1, kp * 1.6); ctx.translate(s.cx, s.cy); ctx.scale(z, z);
+      ctx.shadowColor = "rgba(0,0,0,.28)"; ctx.shadowBlur = 18; ctx.shadowOffsetY = 5; ctx.filter = WARM;
+      ctx.drawImage(im, -iw / 2, -ih / 2, iw, ih); ctx.restore();
+    }
+    ctx.filter = "none"; filmLook(ctx, si * 5 + Math.floor(p * 10), 0.25);
+  }
   let grainTile = null, vignette = null;
-  function filmLook(ctx, seed) { // film grain + soft dark edges, like moodboard edits
+  function filmLook(ctx, seed, edge = 1) { // film grain + soft dark edges, like moodboard edits
     if (!grainTile) {
       grainTile = new OffscreenCanvas(360, 640); const g = grainTile.getContext("2d"), d = g.createImageData(360, 640);
       for (let i = 0; i < d.data.length; i += 4) { const v = Math.random() * 255; d.data[i] = d.data[i + 1] = d.data[i + 2] = v; d.data[i + 3] = 255; }
@@ -285,7 +340,7 @@
     }
     ctx.save(); ctx.globalAlpha = 0.07; ctx.globalCompositeOperation = "overlay";
     const ox = (seed * 97) % 180, oy = (seed * 61) % 320; ctx.drawImage(grainTile, -ox, -oy, W + 360, H + 640); ctx.restore();
-    ctx.fillStyle = vignette; ctx.fillRect(0, 0, W, H);
+    ctx.save(); ctx.globalAlpha = edge; ctx.fillStyle = vignette; ctx.fillRect(0, 0, W, H); ctx.restore();
   }
   async function pickCodec() {
     for (const codec of ["avc1.640032", "avc1.4d0032", "avc1.42003e"]) {
@@ -315,12 +370,13 @@
       if (P.dropAt) applied.push("slow build, drop at " + fmt(P.dropAt) + "s");
       const trUsed = [...new Set(P.shots.slice(1).map((x) => x.tr).filter((x) => x !== "hard cut"))]; if (L && L.transitions && trUsed.length) applied.push(trUsed.join(" + ") + " transitions");
       progress(0, "Picking photos…");
-      const imgs = await loadImages(await listFiles(), style === "duo" ? P.shots.length * 2 : P.shots.length);
+      const imgs = await loadImages(await listFiles(), style === "duo" ? P.shots.length * 2 : style === "vintage" ? P.shots.length + Math.ceil(P.shots.length / PAGE) : P.shots.length);
       if (!imgs.length) return { error: "I couldn't find any photos in the niche.co folder. Add some product photos to it." };
       if (L && L.faceFirst != null && Math.max(L.faceFirst, L.personFirst || 0) >= 0.5) { progress(0, "Finding a photo with a face to open on…"); if (await personFirst(imgs)) applied.push("opens on a person"); }
       const words = (opts.text != null ? opts.text : $("#vlText").value || "").trim();
       const text = words ? { text: words, from: clamp(L && L.textTime != null ? L.textTime : 0.2, 0, 1.5), to: 0, y: { top: 0.2, middle: 0.42, bottom: 0.74 }[(L && L.textPos) || "top"] } : null;
-      if (text) { text.to = L && L.textWhole > 0.6 ? P.end : Math.min(P.end, text.from + 3); applied.push("hook text at the " + ((L && L.textPos) || "top")); }
+      if (text && style === "vintage") { text.plain = true; text.beat = P.beat; text.y = L && L.textPos === "top" ? 0.2 : L && L.textPos === "middle" ? 0.45 : 0.86; }
+      if (text) { text.to = L && L.textWhole > 0.6 || style === "vintage" ? P.end : Math.min(P.end, text.from + 3); applied.push("hook text at the " + ((L && L.textPos) || (style === "vintage" ? "bottom" : "top"))); }
       const codec = await pickCodec(); if (!codec) return { error: "This laptop's browser has no H.264 video encoder." };
       const target = new Mp4Muxer.ArrayBufferTarget();
       const muxer = new Mp4Muxer.Muxer({ target, video: { codec: "avc", width: W, height: H, frameRate: FPS }, fastStart: "in-memory" });
@@ -344,7 +400,8 @@
       const videos = await VL.dir.getDirectoryHandle("videos", { create: true });
       const name = await nextName(videos);
       const fh = await videos.getFileHandle(name, { create: true }), w = await fh.createWritable(); await w.write(blob); await w.close();
-      store.set("vlabLastStyle", style);
+      store.set("vlabLastStyle", style); layout.cache = {};
+      const made = store.get("vlabMade", {}); made[name] = { style, rating: null }; store.set("vlabMade", made);
       VL.last = { name, url: URL.createObjectURL(blob), style, secs: P.total, bpm: P.bpm, shot: P.shot, learned: !!L, applied, textTip: !text && L && L.textShare >= 0.5 ? (L.hooks[0] || "") : null };
       progress(1, "Saved " + name);
       return VL.last;
@@ -530,7 +587,8 @@
     $("#vlMake").disabled = $("#vlStudy").disabled = VL.busy;
     $("#vlStop").hidden = !VL.busy;
     const out = $("#vlOut");
-    out.innerHTML = VL.last ? `<video src="${VL.last.url}" controls muted loop playsinline style="width:100%;max-height:420px;background:#000;margin-top:10px"></video><div class="mu" style="margin-top:6px">${esc(VL.last.name)} · ${esc(STYLES[VL.last.style])} · ${fmt(VL.last.secs)}s · cut every ${fmt(VL.last.shot, 2)}s at ${VL.last.bpm} BPM${VL.last.learned ? " (from what works)" : ""} · saved in videos${VL.last.applied && VL.last.applied.length ? "<br>Learned: " + esc(VL.last.applied.join(", ")) : ""}${VL.last.textTip != null ? "<br>Tip: videos that work use on-screen text" + (VL.last.textTip ? " (like “" + esc(VL.last.textTip.slice(0, 50)) + "”)" : "") + ". Type a hook line in the text box." : ""}</div>` : "";
+    out.innerHTML = VL.last ? `<video src="${VL.last.url}" controls muted loop playsinline style="width:100%;max-height:420px;background:#000;margin-top:10px"></video><div class="mu" style="margin-top:6px">${esc(VL.last.name)} · ${esc(STYLES[VL.last.style])} · ${fmt(VL.last.secs)}s · cut every ${fmt(VL.last.shot, 2)}s at ${VL.last.bpm} BPM${VL.last.learned ? " (from what works)" : ""} · saved in videos${VL.last.applied && VL.last.applied.length ? "<br>Learned: " + esc(VL.last.applied.join(", ")) : ""}${VL.last.textTip != null ? "<br>Tip: videos that work use on-screen text" + (VL.last.textTip ? " (like “" + esc(VL.last.textTip.slice(0, 50)) + "”)" : "") + ". Type a hook line in the text box." : ""}</div><div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap"><button type="button" class="ghost" id="vlUp" style="${(store.get("vlabMade", {})[VL.last.name] || {}).rating === "up" ? "background:var(--ok);color:var(--bg)" : ""}">🔥 More like this</button><button type="button" class="ghost" id="vlDown" style="${(store.get("vlabMade", {})[VL.last.name] || {}).rating === "down" ? "background:var(--bad);color:var(--bg)" : ""}">👎 Not this style</button></div>` : "";
+    if (VL.last) { $("#vlUp").onclick = () => { const r = rate(VL.last.name, VL.last.style, true); msg(r ? "Got it: more " + STYLES[VL.last.style].toLowerCase() + " videos." : "Rating removed."); render(); }; $("#vlDown").onclick = () => { const r = rate(VL.last.name, VL.last.style, false); msg(r ? "Got it: less " + STYLES[VL.last.style].toLowerCase() + "." : "Rating removed."); render(); }; }
     const ins = insights();
     $("#vlLearn").innerHTML = ins ? ins.lines.map((l) => `<div class="rowx"><span>${esc(l)}</span></div>`).join("") + `<div class="mu" style="margin-top:4px">Based on ${ins.L.n} video${ins.L.n > 1 ? "s" : ""} marked as working (everything in the inspiration folder counts unless you mark it 👎).</div>`
       : '<div class="mu">Drop videos you like into niche.co/inspiration and hit Study. Jarvis learns their pacing, hook, colour and beat, and new videos follow it.</div>';
@@ -544,7 +602,8 @@
   /* ---------- voice ---------- */
   function styleFrom(t) {
     t = t.toLowerCase();
-    if (/collage|pop/.test(t)) return "collage";
+    if (/polaroid/.test(t)) return "collage";
+    if (/collage|pop|vintage|old money|riviera|summer/.test(t)) return "vintage";
     if (/(black and white|b ?& ?w|b and w).*(colou?r)/.test(t)) return "bw2colour";
     if (/grid/.test(t)) return "bwmood";
     if (/mood ?board|black and white|b ?& ?w/.test(t)) return "bwfull";

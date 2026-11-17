@@ -50,7 +50,7 @@ Actions:
     { name: "log_kite_payment", description: "Record a kitesurfing EFT payment in the income panel. Only after he confirmed.", strict: true, input_schema: obj({ amount: { type: "number", description: "Rand" }, date: { type: "string", description: "YYYY-MM-DD" }, note: { type: "string" } }, ["amount", "date", "note"]) },
     { name: "set_alarm_time", description: "Change the wake-up alarm time. Hayden still has to click Arm on the laptop before bed.", strict: true, input_schema: obj({ time: { type: "string", description: "HH:MM 24-hour" } }, ["time"]) },
     { name: "make_video", description: "Make a vertical niche.co video for TikTok and Instagram from the photos in the niche.co folder and save it in niche.co/videos. Takes about 15 seconds.", strict: true, input_schema: obj({
-      style: { type: "string", enum: ["auto", "bwfull", "hardcut", "bwmood", "fastcolour", "collage", "bw2colour", "duo"], description: "auto follows what the video lab learned; bwfull = full-screen black and white moodboard edit; bwmood = B&W photo grid" },
+      style: { type: "string", enum: ["auto", "vintage", "bwfull", "hardcut", "bwmood", "fastcolour", "collage", "bw2colour", "duo"], description: "auto follows what the video lab learned; vintage = old-money vintage collage, niche.co's main look; bwfull = full-screen black and white moodboard edit; bwmood = B&W photo grid" },
       seconds: { type: "integer", description: "Length, 6-30; 0 means use the learned length" },
       text: { type: "string", description: "Hook text to show on screen, or empty string for none" },
     }, ["style", "seconds", "text"]) },
