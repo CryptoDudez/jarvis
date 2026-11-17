@@ -196,7 +196,7 @@
     if (VL.busy) return { error: "I'm already working on something." };
     if (!(await ensureReady())) return { error: "Connect the niche.co folder in the Video Lab panel first." };
     if (!window.VideoEncoder || !window.Mp4Muxer) return { error: "This browser can't make videos. Use Chrome or Edge." };
-    VL.busy = true; render();
+    VL.busy = true; VL.stop = false; render();
     try {
       const L = opts.useLearned === false ? null : learned();
       const style = chooseStyle(opts.style || $("#vlStyle").value, L);
@@ -216,6 +216,7 @@
       const frames = Math.round(P.total * FPS);
       for (let i = 0; i < frames; i++) {
         if (encErr) throw encErr;
+        if (VL.stop) { try { enc.close(); } catch (e) {} imgs.forEach((b) => b.close && b.close()); return { error: "Stopped. No video was saved." }; }
         drawFrame(ctx, style, P, imgs, i / FPS, rnd);
         const vf = new VideoFrame(cv, { timestamp: Math.round((i * 1e6) / FPS), duration: Math.round(1e6 / FPS) });
         enc.encode(vf, { keyFrame: i % (FPS * 2) === 0 }); vf.close();
@@ -245,6 +246,7 @@
     const c = document.createElement("canvas"); c.width = cw; c.height = ch; const x = c.getContext("2d", { willReadFrequently: true });
     let prev = null; const diffs = [], times = [], sats = [], lums = [], pal = new Map();
     for (let t = 0, i = 0; t < dur; t += step, i++) {
+      if (VL.stop) { URL.revokeObjectURL(url); return null; }
       v.currentTime = Math.min(t, dur - 0.01); await once(v, "seeked");
       x.drawImage(v, 0, 0, cw, ch); const d = x.getImageData(0, 0, cw, ch).data, lum = new Float32Array(cw * ch), rgb = new Uint8ClampedArray(d);
       let ls = 0, ss = 0;
@@ -307,22 +309,25 @@
     if (!(await ensureReady())) return { error: "Connect the niche.co folder in the Video Lab panel first." };
     VL.busy = true; render();
     try {
-      const vids = (await listFiles()).filter((f) => VID_RE.test(f.name));
+      VL.stop = false;
+      const vids = (await listFiles()).filter((f) => VID_RE.test(f.name) && /^inspiration\//i.test(f.path));
       const done = new Set(VL.analyses.map((a) => a.path + "|" + a.size));
       let n = 0;
       for (const f of vids) {
+        if (VL.stop) break;
         const file = await f.h.getFile();
         if (!all && done.has(f.path + "|" + file.size)) continue;
         progress(0, "Studying " + f.name + "…");
         try {
           const r = await analyseVideo(file, (p) => progress(p, "Studying " + f.name + "…"));
+          if (!r) break; // stopped part-way through
           VL.analyses = VL.analyses.filter((a) => a.path !== f.path);
           VL.analyses.push({ path: f.path, name: f.name, size: file.size, at: Date.now(), label: null, ...r });
           n++; await save(); render();
         } catch (e) { msg("Skipped " + f.name + ": " + e.message); }
       }
-      progress(1, n ? "Studied " + n + " video" + (n > 1 ? "s" : "") : "No new videos to study");
-      return { count: n, total: vids.length };
+      progress(1, (VL.stop ? "Stopped. " : "") + (n ? "Studied " + n + " video" + (n > 1 ? "s" : "") : VL.stop ? "" : "No new videos in the inspiration folder"));
+      return { count: n, total: vids.length, stopped: VL.stop };
     } finally { VL.busy = false; render(); }
   }
   async function save() {
@@ -354,6 +359,7 @@
     chip.className = "chip " + (VL.busy ? "wait" : VL.ready ? "live" : "off");
     $("#vlPick").textContent = VL.dir ? (VL.ready ? "Change folder" : "Reconnect " + VL.dir.name + " folder") : "Connect niche.co folder";
     $("#vlMake").disabled = $("#vlStudy").disabled = VL.busy;
+    $("#vlStop").hidden = !VL.busy;
     const out = $("#vlOut");
     out.innerHTML = VL.last ? `<video src="${VL.last.url}" controls muted loop playsinline style="width:100%;max-height:420px;background:#000;margin-top:10px"></video><div class="mu" style="margin-top:6px">${esc(VL.last.name)} · ${esc(STYLES[VL.last.style])} · ${fmt(VL.last.secs)}s · cut every ${fmt(VL.last.shot, 2)}s at ${VL.last.bpm} BPM${VL.last.learned ? " (from what works)" : ""} · saved in videos</div>` : "";
     const ins = insights();
@@ -386,11 +392,12 @@
     return say(r.error ? r.error : "Your video is done. It's saved as " + r.name.replace(".mp4", "") + " in your niche.co videos folder.");
   }
   async function voiceStudy() {
-    say("Studying your videos. This takes a few seconds each.");
+    say("Studying the videos in your inspiration folder. Say stop studying to stop.");
     const r = await analyseNew(false);
     if (r.error) return say(r.error);
     const ins = insights();
-    return say((r.count ? "Done. I studied " + r.count + " new video" + (r.count > 1 ? "s. " : ". ") : "No new videos to study. ") + (ins ? ins.lines.slice(0, 3).join(" ") : "Put some videos you like in the inspiration folder so I can learn from them."));
+    if (r.stopped) return say("Stopped. I studied " + r.count + " video" + (r.count === 1 ? "" : "s") + " before that.");
+    return say((r.count ? "Done. I studied " + r.count + " new video" + (r.count > 1 ? "s. " : ". ") : "No new videos in the inspiration folder. ") + (ins ? ins.lines.slice(0, 3).join(" ") : "Put some videos you like in the inspiration folder so I can learn from them."));
   }
   function voiceLearn() { const ins = insights(); return say(ins ? ins.lines.join(" ") : "I haven't studied any videos yet. Put some in the inspiration folder and say: study my videos."); }
 
@@ -399,9 +406,11 @@
     const sel = $("#vlStyle"); sel.innerHTML = Object.entries(STYLES).map(([k, v]) => `<option value="${k}">${v}</option>`).join("");
     $("#vlPick").onclick = () => (VL.dir && !VL.ready ? checkPerm(true).then(render) : pickFolder());
     $("#vlMake").onclick = async () => { const r = await makeVideo({}); if (r.error) msg(r.error); else say("Your video is done. Saved as " + r.name.replace(".mp4", "") + "."); };
+    $("#vlStop").onclick = () => { VL.stop = true; msg("Stopping…"); };
     $("#vlStudy").onclick = async () => { const r = await analyseNew(false); if (r.error) msg(r.error); };
     loadFolder();
   }
   init();
-  window.VideoLab = { init, makeVideo, analyseNew, insights, voiceMake, voiceStudy, voiceLearn, _plan: plan, _analyseVideo: analyseVideo, _state: VL };
+  function stop() { if (!VL.busy) return false; VL.stop = true; return true; }
+  window.VideoLab = { init, stop, makeVideo, analyseNew, insights, voiceMake, voiceStudy, voiceLearn, _plan: plan, _analyseVideo: analyseVideo, _state: VL };
 })();

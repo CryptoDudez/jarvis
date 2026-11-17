@@ -240,7 +240,7 @@ input,select{width:100%;background:#030b14;color:var(--ice);border:1px solid var
       <div id="vlOut"></div>
       <div class="lbl" style="margin-top:16px">What works</div>
       <div class="list" id="vlLearn"></div>
-      <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap"><button type="button" class="ghost" id="vlStudy">Study new videos</button></div>
+      <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap"><button type="button" class="ghost" id="vlStudy">Study inspiration folder</button><button type="button" id="vlStop" hidden>Stop</button></div>
       <div class="list" id="vlList" style="margin-top:6px"></div>
     </div>
   </section>
@@ -460,6 +460,7 @@ document.querySelectorAll(".hint button").forEach(b=>b.onclick=()=>{$("#heard").
 async function handle(raw){
   const t=raw.toLowerCase();
   if(window.VideoLab){
+    if(/\b(stop|cancel|quit|enough)\b.*\b(study|studying|scan|scanning|analy[sz]ing|video)/.test(t)||/^\s*stop\s*$/.test(t)){return say(VideoLab.stop()?"Stopping.":"I'm not working on anything right now.")}
     if(/\b(make|create|generate|build|need|want)\b.*\b(video|reel|tiktok|clip)\b/.test(t)&&!/calendar/.test(t))return VideoLab.voiceMake(raw);
     if(/\b(analy[sz]e|study|learn from|check)\b.*\b(videos?|clips?|reels?|tiktoks?|inspiration)\b/.test(t))return VideoLab.voiceStudy();
     if(/what (makes|works)|why .*(videos?|reels?) (work|do well|flop)|video (tips|learnings|trends)/.test(t))return VideoLab.voiceLearn();
