@@ -6,8 +6,9 @@
   const W = 1080, H = 1920, FPS = 30;
   const STYLES = {
     auto: "Auto (learned)",
+    bwfull: "B&W full-screen moodboard",
     hardcut: "Hard cuts on white",
-    bwmood: "B&W moodboard",
+    bwmood: "B&W photo grid",
     fastcolour: "Fast colour",
     collage: "Collage pop-in",
     bw2colour: "B&W to colour",
@@ -78,6 +79,7 @@
       bw: median(wins.map((a) => a.m.bwShare)),
       onBeat: median(wins.map((a) => a.a && a.a.cutsOnBeat)),
       dur: median(wins.map((a) => a.m.duration)),
+      brightness: median(wins.filter((a) => a.ver >= 3).map((a) => a.m.brightness)),
       ...richLearned(wins),
     };
   }
@@ -148,14 +150,15 @@
   }
   function chooseStyle(req, L) {
     if (req && req !== "auto") return req;
-    const last = store.get("vlabLastStyle", "");
-    let opts = L && L.bw != null && L.bw > 0.5 ? ["bwmood", "bw2colour", "hardcut"] : ["fastcolour", "hardcut", "collage", "bw2colour", "duo", "bwmood"];
-    opts = opts.filter((s) => s !== last);
-    return opts[Math.floor(Math.random() * opts.length)];
+    let opts;
+    if (L && L.bw != null && L.bw >= 0.5) opts = [["bwfull", 0.75], ["bw2colour", 0.15], ["bwmood", 0.1]]; // the winners are black and white
+    else if (L) opts = [["fastcolour", 0.55], ["hardcut", 0.2], ["duo", 0.15], ["collage", 0.1]];
+    else { const all = Object.keys(STYLES).filter((k) => k !== "auto" && k !== store.get("vlabLastStyle", "")); return all[Math.floor(Math.random() * all.length)]; }
+    let r = Math.random(); for (const [k, w] of opts) { r -= w; if (r <= 0) return k; } return opts[0][0];
   }
   function plan(style, L, seconds) {
     const bpm = clamp(Math.round((L && L.bpm) || 120), 80, 170), beat = 60 / bpm;
-    const base = { hardcut: 1, bwmood: 1, fastcolour: 0.5, collage: 1, bw2colour: 2, duo: 2 }[style];
+    const base = { bwfull: 1, hardcut: 1, bwmood: 1, fastcolour: 0.5, collage: 1, bw2colour: 2, duo: 2 }[style];
     let shot = base * beat;
     if (L && L.shot) { // follow what works, snapped to the beat
       const beats = [0.5, 1, 2, 4].reduce((a, b) => (Math.abs(b * beat - L.shot) < Math.abs(a * beat - L.shot) ? b : a), 1);
@@ -177,7 +180,14 @@
       if (t + sd > seconds - 1.2 + 1e-6) break;
       shots.push({ start: t, dur: sd, tr: pickTr(shots.length) }); t += sd;
     }
-    return { bpm, beat, shot, shots, end: t, total: t + 1.4, dropAt };
+    // look: overall brightness like the winners, and a few colour shots if they mix colour into B&W
+    const bright = L && L.brightness != null ? (L.brightness < 0.3 ? 0.82 : L.brightness > 0.6 ? 1.08 : 1) : 1;
+    const colour = new Set();
+    if (style === "bwfull" && L && L.bw != null && L.bw < 0.92) {
+      const want = Math.round((shots.length - 1) * (1 - L.bw)), idx = shots.map((_, i) => i).slice(1).sort(() => Math.random() - 0.5);
+      idx.slice(0, want).forEach((i) => colour.add(i));
+    }
+    return { bpm, beat, shot, shots, end: t, total: t + 1.4, dropAt, bright, colour };
   }
   // drawing helpers
   function cover(ctx, img, x, y, w, h, zoom = 1) {
@@ -225,7 +235,12 @@
   }
   function content(ctx, style, P, imgs, si, p, rnd) { // one shot of the chosen style
     const n = imgs.length, img = imgs[si % n];
-    if (style === "hardcut") {
+    if (style === "bwfull") { // full-screen moodboard edit: one photo at a time, strong B&W, grain and vignette
+      const col = P.colour && P.colour.has(si), b = P.bright || 1;
+      ctx.filter = col ? `contrast(1.08) saturate(0.9) brightness(${b})` : `grayscale(1) contrast(1.35) brightness(${b})`;
+      cover(ctx, img, 0, 0, W, H, 1.08 - 0.08 * ease(p)); ctx.filter = "none";
+      filmLook(ctx, si * 7 + Math.floor(p * 12));
+    } else if (style === "hardcut") {
       ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, W, H);
       contain(ctx, img, W / 2, H / 2, W * 0.86, H * 0.72, 1 + 0.05 * p);
     } else if (style === "fastcolour") {
@@ -259,6 +274,18 @@
       const a = imgs[(si * 2) % n], b = imgs[(si * 2 + 1) % n], k = ease(p * 4);
       cover(ctx, a, -(1 - k) * W * 0.3, 0, W, H / 2 - 6, 1.05); cover(ctx, b, (1 - k) * W * 0.3, H / 2 + 6, W, H / 2 - 6, 1.05);
     }
+  }
+  let grainTile = null, vignette = null;
+  function filmLook(ctx, seed) { // film grain + soft dark edges, like moodboard edits
+    if (!grainTile) {
+      grainTile = new OffscreenCanvas(360, 640); const g = grainTile.getContext("2d"), d = g.createImageData(360, 640);
+      for (let i = 0; i < d.data.length; i += 4) { const v = Math.random() * 255; d.data[i] = d.data[i + 1] = d.data[i + 2] = v; d.data[i + 3] = 255; }
+      g.putImageData(d, 0, 0);
+      vignette = ctx.createRadialGradient(W / 2, H / 2, H * 0.32, W / 2, H / 2, H * 0.72); vignette.addColorStop(0, "rgba(0,0,0,0)"); vignette.addColorStop(1, "rgba(0,0,0,.55)");
+    }
+    ctx.save(); ctx.globalAlpha = 0.07; ctx.globalCompositeOperation = "overlay";
+    const ox = (seed * 97) % 180, oy = (seed * 61) % 320; ctx.drawImage(grainTile, -ox, -oy, W + 360, H + 640); ctx.restore();
+    ctx.fillStyle = vignette; ctx.fillRect(0, 0, W, H);
   }
   async function pickCodec() {
     for (const codec of ["avc1.640032", "avc1.4d0032", "avc1.42003e"]) {
@@ -333,21 +360,35 @@
     await once(v, "loadedmetadata");
     const dur = v.duration, step = Math.max(1 / 15, dur / 450), cw = 48, ch = 86;
     const c = document.createElement("canvas"); c.width = cw; c.height = ch; const x = c.getContext("2d", { willReadFrequently: true });
-    let prev = null; const diffs = [], times = [], sats = [], lums = [], pal = new Map();
+    // 1) sample small frames through the whole video
+    const frames = [], ftimes = [];
     for (let t = 0, i = 0; t < dur; t += step, i++) {
       if (VL.stop) { URL.revokeObjectURL(url); return null; }
       v.currentTime = Math.min(t, dur - 0.01); await once(v, "seeked");
-      x.drawImage(v, 0, 0, cw, ch); const d = x.getImageData(0, 0, cw, ch).data, lum = new Float32Array(cw * ch), rgb = new Uint8ClampedArray(d);
+      x.drawImage(v, 0, 0, cw, ch); frames.push(new Uint8ClampedArray(x.getImageData(0, 0, cw, ch).data)); ftimes.push(t);
+      if (onProg && i % 10 === 0) onProg(t / dur * 0.4);
+    }
+    // 2) ignore parts of the screen that never change: app buttons, tabs, captions and borders of
+    //    screen recordings (TikTok / Instagram / WhatsApp). Only the real video area is measured.
+    const N = cw * ch, nF = frames.length, mean = new Float32Array(N), sq = new Float32Array(N);
+    for (const f of frames) for (let j = 0, k = 0; j < N; j++, k += 4) { const l = (0.299 * f[k] + 0.587 * f[k + 1] + 0.114 * f[k + 2]) / 255; mean[j] += l; sq[j] += l * l; }
+    let live = []; for (let j = 0; j < N; j++) { const m0 = mean[j] / nF, sd = Math.sqrt(Math.max(0, sq[j] / nF - m0 * m0)); if (sd > 0.03) live.push(j); }
+    const uiShare = 1 - live.length / N;
+    if (live.length < N * 0.25 || nF < 3) live = Array.from({ length: N }, (_, j) => j); // mostly still video: measure everything
+    const bandStatic = (r0, r1) => { let st = 0, tot = 0; const set = new Set(live); for (let r = r0; r < r1; r++) for (let q = 0; q < cw; q++) { tot++; if (!set.has(r * cw + q)) st++; } return st / tot; };
+    const screenRec = uiShare > 0.12 && (bandStatic(0, Math.round(ch * 0.1)) > 0.6 || bandStatic(Math.round(ch * 0.88), ch) > 0.6);
+    const diffs = [], times = [], sats = [], lums = [], pal = new Map();
+    frames.forEach((f, i) => {
       let ls = 0, ss = 0;
-      for (let k = 0, j = 0; k < d.length; k += 4, j++) {
-        const r = d[k], g = d[k + 1], b = d[k + 2], mx = Math.max(r, g, b), mn = Math.min(r, g, b);
-        lum[j] = (0.299 * r + 0.587 * g + 0.114 * b) / 255; ls += lum[j]; ss += (mx - mn) / 255;
+      for (const j of live) {
+        const k = j * 4, r = f[k], g = f[k + 1], b = f[k + 2], mx = Math.max(r, g, b), mn = Math.min(r, g, b);
+        ls += (0.299 * r + 0.587 * g + 0.114 * b) / 255; ss += (mx - mn) / 255;
         if (i % 6 === 0 && j % 7 === 0) { const key = ((r >> 5) << 6) | ((g >> 5) << 3) | (b >> 5); pal.set(key, (pal.get(key) || 0) + 1); }
       }
-      lums.push(ls / lum.length); sats.push(ss / lum.length);
-      if (prev) { let df = 0; for (let k = 0; k < rgb.length; k += 4) df += Math.abs(rgb[k] - prev[k]) + Math.abs(rgb[k + 1] - prev[k + 1]) + Math.abs(rgb[k + 2] - prev[k + 2]); diffs.push(df / (lum.length * 765)); times.push(t - step / 2); }
-      prev = rgb; if (onProg && i % 10 === 0) onProg(t / dur * 0.45);
-    }
+      lums.push(ls / live.length); sats.push(ss / live.length);
+      if (i) { const p = frames[i - 1]; let df = 0; for (const j of live) { const k = j * 4; df += Math.abs(f[k] - p[k]) + Math.abs(f[k + 1] - p[k + 1]) + Math.abs(f[k + 2] - p[k + 2]); } diffs.push(df / (live.length * 765)); times.push(ftimes[i] - step / 2); }
+    });
+    if (onProg) onProg(0.45);
     const md = median(diffs) || 0, thr = Math.max(0.09, md * 4);
     const cuts = []; diffs.forEach((df, k) => { if (df > thr && (!cuts.length || times[k] - cuts[cuts.length - 1] > 0.15)) cuts.push(times[k]); });
     // slow fades have no single big jump: look for a big change spread over about a third of a second
@@ -368,12 +409,12 @@
       if (VL.stop) { URL.revokeObjectURL(url); return null; }
     }
     URL.revokeObjectURL(url);
-    const m = { duration: dur, cuts: cuts.length, cutTimes: cuts, transitions: tr, shotAvg: dur / (cuts.length + 1), cutsPerSec: cuts.length / dur, firstCut: cuts.length ? cuts[0] : dur,
+    const m = { duration: dur, cuts: cuts.length, cutTimes: cuts, transitions: tr, uiShare, screenRec, shotAvg: dur / (cuts.length + 1), cutsPerSec: cuts.length / dur, firstCut: cuts.length ? cuts[0] : dur,
       bwShare: sats.filter((s) => s < 0.07).length / sats.length, brightness: lums.reduce((a, b) => a + b, 0) / lums.length, motion: calm.length ? calm.reduce((a, b) => a + b, 0) / calm.length : 0, palette, w: v.videoWidth, h: v.videoHeight };
     if (onProg) onProg(0.85);
     const a = await analyseAudio(file, cuts);
     if (onProg) onProg(1);
-    return { m, a, v: vis, ver: 2 };
+    return { m, a, v: vis, ver: 3 };
   }
   async function analyseAudio(file, cuts) {
     let buf;
@@ -432,7 +473,7 @@
     try {
       VL.stop = false;
       const vids = (await listFiles()).filter((f) => VID_RE.test(f.name) && /^inspiration\//i.test(f.path));
-      const done = new Set(VL.analyses.filter((a) => a.ver >= 2).map((a) => a.path + "|" + a.size)); // older notes get re-studied with the new checks
+      const done = new Set(VL.analyses.filter((a) => a.ver >= 3).map((a) => a.path + "|" + a.size)); // older notes get re-studied with the new checks
       let n = 0;
       for (const f of vids) {
         if (VL.stop) break;
@@ -505,7 +546,8 @@
     t = t.toLowerCase();
     if (/collage|pop/.test(t)) return "collage";
     if (/(black and white|b ?& ?w|b and w).*(colou?r)/.test(t)) return "bw2colour";
-    if (/mood ?board|black and white|b ?& ?w/.test(t)) return "bwmood";
+    if (/grid/.test(t)) return "bwmood";
+    if (/mood ?board|black and white|b ?& ?w/.test(t)) return "bwfull";
     if (/hard ?cut|white/.test(t)) return "hardcut";
     if (/fast|colou?r/.test(t)) return "fastcolour";
     if (/two|split|duo/.test(t)) return "duo";

@@ -51,6 +51,18 @@
     for (let i = 0; i < a.length; i += 4) { const mx = Math.max(a[i], a[i + 1], a[i + 2]), mn = Math.min(a[i], a[i + 1], a[i + 2]); const v = mx > 200 && mx - mn < 40 ? 0 : 255; a[i] = a[i + 1] = a[i + 2] = v; }
     x.putImageData(d, 0, 0); return c;
   }
+  // app screen text from screen recordings (TikTok, Instagram, WhatsApp) — not the video's own captions
+  const UI_RE = /\b(for you|following|friends|inbox|profile|home|live|full screen|see translation|add comment|contains|community|explore|reels?|search|suggested|original sound|sponsored|see more|\.\.more|share|repost|follow|liked by|reply|view replies|participating in this activity|translation|playlist|trackid|add to story)\b/i;
+  function isUiText(t, cy) {
+    const words = t.split(/\s+/), tagged = words.filter((w) => /^[#@]/.test(w)).length;
+    if (tagged >= 1 && tagged / words.length > 0.25) return true;           // hashtags / usernames
+    if (UI_RE.test(t)) return true;                                          // app buttons and labels
+    if (/\b\d+(\.\d+)?\s?[kmKM]\b|\b\d{1,2}:\d{2}\b/.test(t) && words.length < 6) return true; // like counts, clock
+    const letters = (t.match(/[A-Za-z]/g) || []).length;
+    if (letters / t.replace(/\s/g, "").length < 0.6) return true;           // mostly symbols / OCR noise
+    if ((cy < 0.08 || cy > 0.9) && words.length < 8) return true;            // status bar and bottom tab bar
+    return false;
+  }
   async function read(canvas) { // on-screen text lines with position (white captions and dark text)
     const w = await ocr(); if (!w) return [];
     const lines = [], seen = new Set();
@@ -58,11 +70,13 @@
       const { data } = await w.recognize(img, {}, { blocks: true });
       for (const b of data.blocks || []) for (const p of b.paragraphs || []) for (const l of p.lines || []) {
         const t = (l.text || "").replace(/\s+/g, " ").trim();
-        if (l.confidence < 70 || t.replace(/[^A-Za-z0-9]/g, "").length < 3) continue;
+        if (l.confidence < 75 || t.replace(/[^A-Za-z0-9]/g, "").length < 3) continue;
+        if (t.split(/\s+/).filter((w) => /^[A-Za-z']{3,}[.,!?:]?$/.test(w)).length < 2) continue; // at least two real words
         const words = t.split(" ").filter((x) => /[A-Za-z]{2,}|\d/.test(x));
         if (!words.length) continue;
-        const key = t.toLowerCase().replace(/[^a-z0-9]/g, ""); if (seen.has(key)) continue; seen.add(key);
         const cy = (l.bbox.y0 + l.bbox.y1) / 2 / canvas.height;
+        if (isUiText(t, cy)) continue;
+        const key = t.toLowerCase().replace(/[^a-z0-9]/g, ""); if (seen.has(key)) continue; seen.add(key);
         lines.push({ text: t, y: cy, pos: cy < 0.33 ? "top" : cy < 0.66 ? "middle" : "bottom", h: (l.bbox.y1 - l.bbox.y0) / canvas.height });
       }
     } catch (e) {}
@@ -91,7 +105,7 @@
     const n = Math.min(12, Math.max(4, Math.round(dur * 1.2)));
     const times = [0.25, 0.75, ...Array.from({ length: n - 2 }, (_, i) => 1 + (i + 0.5) * (Math.max(0.5, dur - 1) / (n - 2)))].filter((t) => t < dur);
     const ocrAt = new Set([0, 1, Math.floor(times.length / 2), times.length - 1]);
-    const seen = new Map();
+    const seen = new Map(), allLines = [];
     for (let i = 0; i < times.length; i++) {
       if (stop && stop()) return null;
       await grab(v, times[i], big);
@@ -106,11 +120,15 @@
       if (ocrAt.has(i)) {
         const lines = await read(big); if (S.ocr) res.ok.text = true;
         if (lines.length) res.textFrames++;
+        lines.forEach((ln) => allLines.push({ ...ln, frame: i }));
         for (const ln of lines) { const k = ln.text.toLowerCase(); if (!seen.has(k)) { seen.set(k, 1); res.text.push({ ...ln, t: +times[i].toFixed(2) }); } }
       }
       if (onProg) onProg((i + 1) / times.length);
       await sleep(0);
     }
+    const counts = {}; allLines.forEach((l) => { const k = l.text.toLowerCase(); counts[k] = (counts[k] || 0) + 1; });
+    res.text = res.text.filter((l) => !(l.y > 0.72 && counts[l.text.toLowerCase()] >= Math.max(3, ocrAt.size - 1)));
+    res.textFrames = Math.min(res.textFrames, new Set(allLines.filter((l) => res.text.some((x) => x.text === l.text)).map((l) => l.frame)).size);
     res.textShare = res.ok.text ? res.textFrames / ocrAt.size : null;
     res.firstText = res.text.length ? res.text[0].t : null;
     res.textPos = res.text.length ? mode(res.text.map((x) => x.pos)) : null;
