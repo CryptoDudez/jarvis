@@ -226,6 +226,23 @@ input,select{width:100%;background:#030b14;color:var(--ice);border:1px solid var
       <button type="button" class="ghost" id="evCancel" hidden style="margin-top:8px">Cancel edit</button>
       <div class="mu" id="evMsg" style="margin-top:8px">Say "Hey Jarvis, add a lesson with Tom tomorrow at 10am to my calendar".</div>
     </div>
+
+    <div class="panel" id="vlP">
+      <div class="ph"><h2>niche.co · Video lab</h2><span class="chip off" id="vlChip">No folder</span></div>
+      <button type="button" class="ghost" id="vlPick">Connect niche.co folder</button>
+      <div class="form" style="margin-top:12px">
+        <select id="vlStyle" aria-label="Video style"></select>
+        <select id="vlLen" aria-label="Video length"><option value="8">8 seconds</option><option value="10" selected>10 seconds</option><option value="15">15 seconds</option><option value="20">20 seconds</option></select>
+        <button type="button" class="full" id="vlMake">Make a video</button>
+      </div>
+      <div style="height:4px;background:var(--line);margin-top:10px"><div id="vlBar" style="height:4px;width:0;background:var(--cyan);transition:width .2s"></div></div>
+      <div class="mu" id="vlMsg" style="margin-top:6px">Say "Hey Jarvis, make me a video for TikTok and Instagram". Videos are 1080×1920, silent, ready for you to add a sound.</div>
+      <div id="vlOut"></div>
+      <div class="lbl" style="margin-top:16px">What works</div>
+      <div class="list" id="vlLearn"></div>
+      <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap"><button type="button" class="ghost" id="vlStudy">Study new videos</button></div>
+      <div class="list" id="vlList" style="margin-top:6px"></div>
+    </div>
   </section>
 
   <!-- RIGHT: money + social -->
@@ -442,6 +459,11 @@ document.querySelectorAll(".hint button").forEach(b=>b.onclick=()=>{$("#heard").
 /* ===== brain (rule-based until the AI brain is connected) ===== */
 async function handle(raw){
   const t=raw.toLowerCase();
+  if(window.VideoLab){
+    if(/\b(make|create|generate|build|need|want)\b.*\b(video|reel|tiktok|clip)\b/.test(t)&&!/calendar/.test(t))return VideoLab.voiceMake(raw);
+    if(/\b(analy[sz]e|study|learn from|check)\b.*\b(videos?|clips?|reels?|tiktoks?|inspiration)\b/.test(t))return VideoLab.voiceStudy();
+    if(/what (makes|works)|why .*(videos?|reels?) (work|do well|flop)|video (tips|learnings|trends)/.test(t))return VideoLab.voiceLearn();
+  }
   const calWord=/calendar|lesson|meeting|appointment|event|reminder/.test(t);
   if(/\b(add|put|create|schedule|set up|book in|pencil in)\b/.test(t)&&calWord&&!/\bwash\b/.test(t))return cmdCal(raw);
   if(/\b(book|schedule)\b/.test(t))return cmdBook(raw);
@@ -456,7 +478,7 @@ async function handle(raw){
   if(/today|tomorrow|this week|what'?s on|busy|free|schedule|wash|booking|on for|monday|tuesday|wednesday|thursday|friday|saturday|sunday/.test(t)){const w=todaySpeech(t);if(w)await say(w);return say(await calSpeech(t))}
   if(/\btime\b/.test(t))return say("It's "+new Date().toLocaleTimeString("en-ZA",{hour:"2-digit",minute:"2-digit",timeZone:TZ})+".");
   if(/thank/.test(t))return say("Always, sir.");
-  return say("I can't do that one yet. Right now I handle the weather, your schedule, lessons, calendar, emails, income, bookings and your wake-up. More is coming.");
+  return say("I can't do that one yet. Right now I handle the weather, your schedule, lessons, calendar, emails, income, bookings, niche.co videos and your wake-up. More is coming.");
 }
 function openSong(){const w=window.open(SONG,"_blank");if(!w)location.href=SONG}
 
@@ -1037,4 +1059,6 @@ $("#say").textContent=(h<12?"Good morning":h<18?"Good afternoon":"Good evening")
 try{navigator.wakeLock&&document.addEventListener("click",()=>navigator.wakeLock.request("screen").catch(()=>{}),{once:true})}catch(e){}
 if("serviceWorker" in navigator)navigator.serviceWorker.register("sw.js").catch(()=>{});
 </script>
+<script src="lib/mp4-muxer.js"></script>
+<script src="videolab.js"></script>
 </body></html>
