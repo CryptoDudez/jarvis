@@ -782,11 +782,16 @@ function hfListen(){ // background recogniser that only reacts to the wake word
   if(mode!=="idle"){setTimeout(hfListen,800);return}
   if(!SR){$("#hfMsg").textContent="Your browser can't listen. Use Chrome or Edge.";hfStop();return}
   const r=new SR();hf.rec=r;r.lang="en-ZA";r.continuous=true;r.interimResults=true;let fired=false;
+  // after "Jarvis", wait until he has finished the sentence (final result, or a short pause) before acting
+  let pend=null,pendT=null;
+  const go=()=>{if(fired||!pend)return;fired=true;clearTimeout(pendT);hf.fails=0;try{r.abort()}catch(x){}woke(pend.rest,pend.t)};
   r.onresult=e=>{
     for(let i=e.resultIndex;i<e.results.length;i++){const t=e.results[i][0].transcript,m=t.match(WAKE_RE);if(!m||fired)continue;
       const rest=m[1].replace(/^[\s,.!?]+/,"").trim();
-      if(!e.results[i].isFinal&&rest.split(/\s+/).filter(Boolean).length<2)continue; // a command may still be coming
-      fired=true;hf.fails=0;try{r.abort()}catch(x){}woke(rest,t);return}
+      pend={rest,t};clearTimeout(pendT);
+      if(e.results[i].isFinal){go();return}
+      pendT=setTimeout(go,rest?1300:1600); // no final yet: act after he's been quiet for a moment
+    }
   };
   r.onerror=e=>{if(e.error==="not-allowed"||e.error==="service-not-allowed"){hfStop();$("#hfMsg").textContent="Jarvis needs the microphone. Allow it in the browser's site settings, then switch listening on again."}else hf.fails++};
   r.onend=()=>{if(hf.rec===r)hf.rec=null;if(!fired&&hf.on&&!hf.paused)setTimeout(hfListen,hf.fails>5?3000:250)}; // the browser stops every minute or so; start again

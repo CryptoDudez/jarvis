@@ -67,14 +67,20 @@
   }
   // "pull up my calendar" -> "calendar"; "close" / "go home" -> null; anything else -> undefined
   function fromVoice(t) {
-    t = t.toLowerCase().replace(/^(hey |ok )?jarvis[,.]?\s*/, "").trim();
-    const screenWords = "(?:it|that|this|them|everything|the screen|screen|(?:the |my |our )?[a-z' .]{2,30}?)";
-    if (new RegExp("^(?:(?:please |can you |could you )?(?:take|put) " + screenWords + "[ ,]*)+away[.!]?$").test(t)) return null; // "take it, take the calendar away"
-    const cm = t.match(/^(?:please |can you |could you )?(?:close|hide|clear|dismiss|remove|minimi[sz]e|get rid of|shut)(?: down)? (?:the |my |our )?(.+?)(?: screen| panel| page)?[.!]?$/);
-    if (cm && (/^(it|that|this|them|everything|screen|the screen)$/.test(cm[1]) || Object.values(SCREENS).some((S) => S.words.test(cm[1]) && cm[1].split(" ").length <= 3))) return null;
-    if (/\b(take|put) (it|that|this|them) away\b/.test(t)) return null;
-    if (/^(close|hide|clear|dismiss|minimi[sz]e)[.!]?$|^(go home|home|go back|back|that'?s all|done|all good)[.!]?$/.test(t)) return null;
-    const m = t.match(/^(?:can you |could you |please )?(?:pull up|show(?: me)?|open(?: up)?|bring up|go to|display|let me see|take me to)\s+(?:my |the |our )?(.+?)(?:\s+(?:screen|panel|page|tab|section))?[.!?]*$/);
+    // tidy what the speech engine heard: lower case, no punctuation, no "hey Jarvis", no polite filler
+    t = " " + t.toLowerCase().replace(/[^a-z0-9' ]+/g, " ").replace(/\s+/g, " ").trim() + " ";
+    t = t.replace(/^ (?:(?:hey|ok|okay|yo|hi) )?jarvis /, " ").replace(/^ (?:(?:please|can you|could you|would you|just|yo|ok|okay|now) )+/, " ")
+      .replace(/ (?:(?:please|now|thanks|thank you|for me|right now|quickly|again) )+$/, " ").trim();
+    const isScreen = (w) => /^(it|that|this|them|everything|all|screen|the screen|this screen|that screen)$/.test(w) || Object.values(SCREENS).some((S) => S.words.test(w) && w.split(" ").length <= 4);
+    // "take it away", "take the calendar away", "take it take the calendar away", "put that away"
+    if (/^(?:(?:take|put|get) .{0,30}? ?)+away$/.test(t) && /^(take|put|get)\b/.test(t)) return null;
+    if (/\b(take|put|get) (it|that|this|them|everything) away\b/.test(t)) return null;
+    // "close the calendar", "hide my inbox", "get rid of it", "minimise it"
+    const cm = t.match(/^(?:close|hide|clear|dismiss|remove|minimi[sz]e|get rid of|shut|kill|lose)(?: down| off| out)? (?:the |my |our |of )?(.+?)(?: screen| panel| page| tab)?$/);
+    if (cm && isScreen(cm[1])) return null;
+    if (/^(close|hide|clear|dismiss|minimi[sz]e|go home|home|go back|back|that's all|thats all|done|all good|i'm done|im done|enough|that's enough)$/.test(t)) return null;
+    // "pull up my calendar", "show me the money screen", "open video lab"
+    const m = t.match(/^(?:pull up|show(?: me)?|open(?: up)?|bring up|go to|display|let me see|take me to|put up|throw up)\s+(?:my |the |our )?(.+?)(?:\s+(?:screen|panel|page|tab|section))?$/);
     if (!m) return undefined;
     for (const k in SCREENS) if (SCREENS[k].words.test(m[1])) return k;
     return undefined;
