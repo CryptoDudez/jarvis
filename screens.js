@@ -68,7 +68,12 @@
   // "pull up my calendar" -> "calendar"; "close" / "go home" -> null; anything else -> undefined
   function fromVoice(t) {
     t = t.toLowerCase().replace(/^(hey |ok )?jarvis[,.]?\s*/, "").trim();
-    if (/^(close|hide|clear|dismiss)( it| that| this| the screen| screen| everything)?[.!]?$|^(go home|home|go back|back|that'?s all|done)[.!]?$/.test(t)) return null;
+    const screenWords = "(?:it|that|this|them|everything|the screen|screen|(?:the |my |our )?[a-z' .]{2,30}?)";
+    if (new RegExp("^(?:(?:please |can you |could you )?(?:take|put) " + screenWords + "[ ,]*)+away[.!]?$").test(t)) return null; // "take it, take the calendar away"
+    const cm = t.match(/^(?:please |can you |could you )?(?:close|hide|clear|dismiss|remove|minimi[sz]e|get rid of|shut)(?: down)? (?:the |my |our )?(.+?)(?: screen| panel| page)?[.!]?$/);
+    if (cm && (/^(it|that|this|them|everything|screen|the screen)$/.test(cm[1]) || Object.values(SCREENS).some((S) => S.words.test(cm[1]) && cm[1].split(" ").length <= 3))) return null;
+    if (/\b(take|put) (it|that|this|them) away\b/.test(t)) return null;
+    if (/^(close|hide|clear|dismiss|minimi[sz]e)[.!]?$|^(go home|home|go back|back|that'?s all|done|all good)[.!]?$/.test(t)) return null;
     const m = t.match(/^(?:can you |could you |please )?(?:pull up|show(?: me)?|open(?: up)?|bring up|go to|display|let me see|take me to)\s+(?:my |the |our )?(.+?)(?:\s+(?:screen|panel|page|tab|section))?[.!?]*$/);
     if (!m) return undefined;
     for (const k in SCREENS) if (SCREENS[k].words.test(m[1])) return k;
