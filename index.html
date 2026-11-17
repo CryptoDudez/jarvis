@@ -139,6 +139,14 @@ input,select{width:100%;background:#030b14;color:var(--ice);border:1px solid var
       </details>
     </div>
 
+    <div class="panel" id="aiP">
+      <div class="ph"><h2>Jarvis brain</h2><span class="chip off" id="aiChip">Off</span></div>
+      <form id="aiF" style="display:flex;gap:8px" autocomplete="off"><input id="aiKey" type="password" aria-label="Anthropic API key" autocomplete="off"><button type="submit">Save</button></form>
+      <div style="margin-top:8px"><select id="aiModel" aria-label="Brain model"></select></div>
+      <div class="mu" id="aiMsg" style="margin-top:8px"></div>
+      <button type="button" class="ghost" id="aiForget" hidden style="margin-top:8px">Remove key</button>
+    </div>
+
     <div class="panel">
       <div class="ph"><h2>Weather · Wind</h2><span class="chip wait" id="wxChip">Loading</span></div>
       <div class="kv3">
@@ -447,18 +455,20 @@ function listenOnce(cb,ms){
   speechSynthesis&&speechSynthesis.cancel();
   rec=new SR();rec.lang="en-ZA";rec.interimResults=true;rec.maxAlternatives=1;let done=false,tm=null;
   rec.onstart=()=>{setMode("listening");micViz(true);if(ms)tm=setTimeout(()=>{try{rec.stop()}catch(e){}},ms)};
-  rec.onresult=e=>{const t=[...e.results].map(r=>r[0].transcript).join(" ");$("#heard").textContent="“"+t+"”";if(e.results[e.results.length-1].isFinal&&!done){done=true;clearTimeout(tm);cb(t)}};
+  rec.onresult=e=>{const t=[...e.results].map(r=>r[0].transcript).join(" ");$("#heard").textContent="“"+t+"”";if(e.results[e.results.length-1].isFinal&&!done){done=true;clearTimeout(tm);window.Brain&&Brain.setVia("voice");cb(t)}};
   rec.onerror=e=>{setMode("idle");if(e.error==="not-allowed")toast("Allow the microphone for Jarvis in the browser settings.")};
   rec.onend=()=>{clearTimeout(tm);micViz(false);if(mode==="listening")setMode("idle");if(!done)cb("")};
   try{rec.start()}catch(e){}
 }
 $("#mic").onclick=()=>{if(mode==="listening"){try{rec.stop()}catch(e){}return}listenOnce(async t=>{if(t)await handle(t);if(hf.on)hfResume()})};
-$("#askF").onsubmit=e=>{e.preventDefault();const t=$("#askI").value.trim();if(!t)return;$("#heard").textContent="“"+t+"”";$("#askI").value="";handle(t)};
-document.querySelectorAll(".hint button").forEach(b=>b.onclick=()=>{$("#heard").textContent="“"+b.dataset.q+"”";handle(b.dataset.q)});
+$("#askF").onsubmit=e=>{e.preventDefault();const t=$("#askI").value.trim();if(!t)return;window.Brain&&Brain.setVia("text");$("#heard").textContent="“"+t+"”";$("#askI").value="";handle(t)};
+document.querySelectorAll(".hint button").forEach(b=>b.onclick=()=>{window.Brain&&Brain.setVia("text");$("#heard").textContent="“"+b.dataset.q+"”";handle(b.dataset.q)});
 
 /* ===== brain (rule-based until the AI brain is connected) ===== */
 async function handle(raw){
   const t=raw.toLowerCase();
+  // with a brain, Jarvis talks normally and uses its features as tools; set commands are the fallback
+  if(window.Brain&&Brain.on()&&!/^\s*(stop|cancel)\b/.test(t)){if(await Brain.handleText(raw))return}
   if(window.VideoLab){
     if(/\b(stop|cancel|quit|enough)\b.*\b(study|studying|scan|scanning|analy[sz]ing|video)/.test(t)||/^\s*stop\s*$/.test(t)){return say(VideoLab.stop()?"Stopping.":"I'm not working on anything right now.")}
     if(/\b(make|create|generate|build|need|want)\b.*\b(video|reel|tiktok|clip)\b/.test(t)&&!/calendar/.test(t))return VideoLab.voiceMake(raw);
@@ -479,7 +489,7 @@ async function handle(raw){
   if(/today|tomorrow|this week|what'?s on|busy|free|schedule|wash|booking|on for|monday|tuesday|wednesday|thursday|friday|saturday|sunday/.test(t)){const w=todaySpeech(t);if(w)await say(w);return say(await calSpeech(t))}
   if(/\btime\b/.test(t))return say("It's "+new Date().toLocaleTimeString("en-ZA",{hour:"2-digit",minute:"2-digit",timeZone:TZ})+".");
   if(/thank/.test(t))return say("Always, sir.");
-  return say("I can't do that one yet. Right now I handle the weather, your schedule, lessons, calendar, emails, income, bookings, niche.co videos and your wake-up. More is coming.");
+  return say("I can't do that one yet. Add a brain key in the Jarvis brain panel and I can chat about anything. Right now I handle the weather, your schedule, lessons, calendar, emails, income, bookings, niche.co videos and your wake-up. More is coming.");
 }
 function openSong(){const w=window.open(SONG,"_blank");if(!w)location.href=SONG}
 
@@ -753,6 +763,7 @@ function hfPause(){hf.paused=true;if(hf.rec){try{hf.rec.abort()}catch(e){}hf.rec
 function hfResume(){hf.paused=false;if(hf.on)setTimeout(hfListen,400)}
 async function woke(rest,heard){
   hfPause();$("#heard").textContent="“"+heard.trim()+"”";window.focus();$("#orb").scrollIntoView({behavior:"smooth",block:"center"});
+  window.Brain&&Brain.setVia("voice");
   if(rest.split(/\s+/).filter(Boolean).length>=2){await handle(rest);hfResume();return}
   await say(["Yes, Hayden?","At your service.","Go ahead, Hayden.","I'm listening."][Math.floor(Math.random()*4)]);
   listenOnce(async c=>{if(c)await handle(c);hfResume()},9000);
@@ -1073,4 +1084,6 @@ if("serviceWorker" in navigator)navigator.serviceWorker.register("sw.js").catch(
 </script>
 <script src="lib/mp4-muxer.js"></script>
 <script src="videolab.js"></script>
+<script src="lib/anthropic-sdk.js"></script>
+<script src="brain.js"></script>
 </body></html>
