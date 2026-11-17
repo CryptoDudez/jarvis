@@ -28,7 +28,7 @@ How to talk:
 
 Actions:
 - Before book_wash, add_calendar_event or log_kite_payment, read the details back in one sentence and ask "Shall I go ahead?". Only call the tool after he clearly says yes in his next message.
-- make_video, study_videos and lookups need no confirmation.
+- make_video, study_videos and lookups need no confirmation. For make_video, if videos that work use on-screen text and Hayden gave no hook line, you may suggest one first.
 - Each user message starts with the current date and time in square brackets; use it to work out "today", "tomorrow", weekdays and so on. Dates for tools are YYYY-MM-DD, times are 24-hour HH:MM.`;
 
   const obj = (props, req) => ({ type: "object", properties: props, required: req || [], additionalProperties: false });
@@ -51,8 +51,9 @@ Actions:
     { name: "set_alarm_time", description: "Change the wake-up alarm time. Hayden still has to click Arm on the laptop before bed.", strict: true, input_schema: obj({ time: { type: "string", description: "HH:MM 24-hour" } }, ["time"]) },
     { name: "make_video", description: "Make a vertical niche.co video for TikTok and Instagram from the photos in the niche.co folder and save it in niche.co/videos. Takes about 15 seconds.", strict: true, input_schema: obj({
       style: { type: "string", enum: ["auto", "hardcut", "bwmood", "fastcolour", "collage", "bw2colour", "duo"], description: "auto follows what the video lab learned" },
-      seconds: { type: "integer", description: "Length, 6-30; use 10 if not asked" },
-    }, ["style", "seconds"]) },
+      seconds: { type: "integer", description: "Length, 6-30; 0 means use the learned length" },
+      text: { type: "string", description: "Hook text to show on screen, or empty string for none" },
+    }, ["style", "seconds", "text"]) },
     { name: "study_videos", description: "Study new videos in the niche.co/inspiration folder and return what makes them work.", strict: true, input_schema: obj({}) },
   ];
   const webSearch = () => (B.model === "claude-haiku-5-5" ? { type: "web_search_20250305", name: "web_search", max_uses: 3 } : { type: "web_search_20260209", name: "web_search", max_uses: 3 });
@@ -125,8 +126,8 @@ Actions:
       case "make_video": {
         if (!window.VideoLab) return { error: "Video lab not loaded" };
         say("On it. Making the video now.");
-        const r = await VideoLab.makeVideo({ style: input.style, seconds: Math.max(6, Math.min(30, input.seconds || 10)) });
-        return r.error ? { error: r.error } : { saved_as: r.name, folder: "niche.co/videos", style: r.style, seconds: Math.round(r.secs), followed_learnings: r.learned };
+        const r = await VideoLab.makeVideo({ style: input.style, seconds: input.seconds ? Math.max(6, Math.min(30, input.seconds)) : "auto", text: input.text || "" });
+        return r.error ? { error: r.error } : { saved_as: r.name, folder: "niche.co/videos", style: r.style, seconds: Math.round(r.secs), learned_and_applied: r.applied || [], tip: r.textTip != null ? "Videos that work use on-screen hook text" : null };
       }
       case "study_videos": {
         if (!window.VideoLab) return { error: "Video lab not loaded" };

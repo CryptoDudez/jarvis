@@ -240,7 +240,8 @@ input,select{width:100%;background:#030b14;color:var(--ice);border:1px solid var
       <button type="button" class="ghost" id="vlPick">Connect niche.co folder</button>
       <div class="form" style="margin-top:12px">
         <select id="vlStyle" aria-label="Video style"></select>
-        <select id="vlLen" aria-label="Video length"><option value="8">8 seconds</option><option value="10" selected>10 seconds</option><option value="15">15 seconds</option><option value="20">20 seconds</option></select>
+        <select id="vlLen" aria-label="Video length"><option value="auto" selected>Length: auto (learned)</option><option value="8">8 seconds</option><option value="10">10 seconds</option><option value="15">15 seconds</option><option value="20">20 seconds</option></select>
+        <input id="vlText" class="full" placeholder="Hook text on screen (optional), e.g. POV: you found your new fit" aria-label="Hook text on screen">
         <button type="button" class="full" id="vlMake">Make a video</button>
       </div>
       <div style="height:4px;background:var(--line);margin-top:10px"><div id="vlBar" style="height:4px;width:0;background:var(--cyan);transition:width .2s"></div></div>
@@ -248,7 +249,7 @@ input,select{width:100%;background:#030b14;color:var(--ice);border:1px solid var
       <div id="vlOut"></div>
       <div class="lbl" style="margin-top:16px">What works</div>
       <div class="list" id="vlLearn"></div>
-      <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap"><button type="button" class="ghost" id="vlStudy">Study inspiration folder</button><button type="button" id="vlStop" hidden>Stop</button></div>
+      <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap"><button type="button" class="ghost" id="vlStudy">Study inspiration folder</button><a class="btn ghost" href="https://ads.tiktok.com/business/creativecenter/inspiration/popular/music/pc/en?region=ZA" target="_blank" rel="noopener">Trending sounds (SA)</a><button type="button" id="vlStop" hidden>Stop</button></div>
       <div class="list" id="vlList" style="margin-top:6px"></div>
     </div>
   </section>
@@ -1083,6 +1084,7 @@ try{navigator.wakeLock&&document.addEventListener("click",()=>navigator.wakeLock
 if("serviceWorker" in navigator)navigator.serviceWorker.register("sw.js").catch(()=>{});
 </script>
 <script src="lib/mp4-muxer.js"></script>
+<script src="videosense.js"></script>
 <script src="videolab.js"></script>
 <script src="lib/anthropic-sdk.js"></script>
 <script src="brain.js"></script>

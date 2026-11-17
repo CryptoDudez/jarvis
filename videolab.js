@@ -78,6 +78,35 @@
       bw: median(wins.map((a) => a.m.bwShare)),
       onBeat: median(wins.map((a) => a.a && a.a.cutsOnBeat)),
       dur: median(wins.map((a) => a.m.duration)),
+      ...richLearned(wins),
+    };
+  }
+  const share = (arr, f) => (arr.length ? arr.filter(f).length / arr.length : null);
+  const modeOf = (a) => { const c = {}; a.filter(Boolean).forEach((x) => (c[x] = (c[x] || 0) + 1)); const e = Object.entries(c).sort((x, y) => y[1] - x[1]); return e.length ? e[0][0] : null; };
+  function richLearned(wins) {
+    const tr = wins.flatMap((a) => a.m.transitions || []), tc = {};
+    tr.forEach((t) => (tc[t] = (tc[t] || 0) + 1));
+    const vis = wins.filter((a) => a.v && a.v.frames), withText = vis.filter((a) => a.v.text && a.v.text.length);
+    const objs = {}; vis.forEach((a) => Object.keys(a.v.objects || {}).forEach((o) => (objs[o] = (objs[o] || 0) + 1)));
+    const tags = {}; withText.forEach((a) => (a.v.hookTags || []).forEach((t) => (tags[t] = (tags[t] || 0) + 1)));
+    const drops = wins.filter((a) => a.a && a.a.drop != null);
+    return {
+      transitions: tr.length ? Object.fromEntries(Object.entries(tc).map(([k, v]) => [k, v / tr.length])) : null,
+      visN: vis.length,
+      textShare: vis.length ? withText.length / vis.length : null,
+      textTime: median(withText.map((a) => a.v.firstText)),
+      textPos: modeOf(withText.map((a) => a.v.textPos)),
+      textWhole: median(withText.map((a) => a.v.textShare)),
+      hooks: withText.map((a) => a.v.hook).filter(Boolean).slice(0, 4),
+      hookTags: Object.entries(tags).sort((x, y) => y[1] - x[1]).map((x) => x[0]),
+      faceFirst: share(vis, (a) => a.v.faceFirst),
+      personFirst: share(vis, (a) => a.v.personFirst),
+      closeUp: share(vis, (a) => a.v.closeUps > 0),
+      person: median(vis.map((a) => a.v.personFrames / a.v.frames)),
+      objects: Object.entries(objs).sort((x, y) => y[1] - x[1]).slice(0, 4).map((x) => x[0]),
+      drop: median(drops.map((a) => a.a.drop)),
+      fasterAfterDrop: share(drops, (a) => a.a.fasterAfter),
+      sound: modeOf(wins.map((a) => a.a && a.a.kind)),
     };
   }
 
@@ -91,16 +120,31 @@
     const pick = [...shuffle(fresh), ...shuffle(rest)].slice(0, Math.min(want, pool.length));
     store.set("vlabUsed", [...pick.map((f) => f.path), ...[...used]].slice(0, 300));
     const out = [];
+    out.paths = [];
     for (const f of pick) {
       try {
         const file = await f.h.getFile();
         let bmp = await createImageBitmap(file);
         const s = Math.min(1, 1600 / Math.max(bmp.width, bmp.height));
         if (s < 1) { const c = new OffscreenCanvas(Math.round(bmp.width * s), Math.round(bmp.height * s)); c.getContext("2d").drawImage(bmp, 0, 0, c.width, c.height); bmp.close(); bmp = await createImageBitmap(c); }
-        out.push(bmp);
+        out.push(bmp); out.paths.push(f.path + "|" + file.size);
       } catch (e) { /* skip unreadable image */ }
     }
     return out;
+  }
+  async function personFirst(imgs) { // move a photo with a face (or a person) to the front
+    if (!window.VideoSense) return false;
+    const tags = store.get("vlabTags", {});
+    let best = -1, bestScore = 0;
+    for (let i = 0; i < imgs.length; i++) {
+      const k = imgs.paths[i];
+      if (!tags[k]) { const t = await VideoSense.tagPhoto(imgs[i]); if (!t) return false; tags[k] = t; }
+      const sc = tags[k].face ? (tags[k].closeUp ? 3 : 2) : tags[k].person ? 1 : 0;
+      if (sc > bestScore) { bestScore = sc; best = i; }
+    }
+    store.set("vlabTags", Object.fromEntries(Object.entries(tags).slice(-500)));
+    if (best > 0) { [imgs[0], imgs[best]] = [imgs[best], imgs[0]]; [imgs.paths[0], imgs.paths[best]] = [imgs.paths[best], imgs.paths[0]]; }
+    return best >= 0;
   }
   function chooseStyle(req, L) {
     if (req && req !== "auto") return req;
@@ -118,10 +162,22 @@
       shot = (style === "fastcolour" ? Math.min(beats, 1) : style === "bw2colour" || style === "duo" ? Math.max(beats, 1) : beats) * beat;
     }
     const hook = clamp((L && L.hook) || shot, beat * 0.5, shot);
-    const shots = [{ start: 0, dur: hook }];
+    // build-up then drop: slower cuts before the drop, full speed after (when that's what works)
+    const cutsStyle = !["bwmood", "collage"].includes(style);
+    const dropAt = cutsStyle && L && L.drop != null && L.fasterAfterDrop >= 0.5 ? clamp(Math.round(L.drop / beat) * beat, 2 * beat, seconds * 0.45) : null;
+    const shots = [{ start: 0, dur: hook, tr: "hard cut" }];
     let t = hook;
-    while (t + shot <= seconds - 1.2 + 1e-6) { shots.push({ start: t, dur: shot }); t += shot; }
-    return { bpm, beat, shot, shots, end: t, total: t + 1.4 };
+    const pickTr = (i) => {
+      if (!cutsStyle) return "hard cut";
+      if (L && L.transitions) { let r = Math.random(); for (const [k, v] of Object.entries(L.transitions)) { r -= v; if (r <= 0) return k; } return "hard cut"; }
+      return style === "fastcolour" && i % 4 === 0 ? "flash" : "hard cut";
+    };
+    while (true) {
+      const sd = dropAt && t < dropAt - 1e-6 ? shot * 2 : shot;
+      if (t + sd > seconds - 1.2 + 1e-6) break;
+      shots.push({ start: t, dur: sd, tr: pickTr(shots.length) }); t += sd;
+    }
+    return { bpm, beat, shot, shots, end: t, total: t + 1.4, dropAt };
   }
   // drawing helpers
   function cover(ctx, img, x, y, w, h, zoom = 1) {
@@ -134,23 +190,46 @@
   }
   const ease = (x) => 1 - Math.pow(1 - clamp(x, 0, 1), 3);
   const pop = (x) => { x = clamp(x, 0, 1); const c1 = 1.70158, c3 = c1 + 1; return 1 + c3 * Math.pow(x - 1, 3) + c1 * Math.pow(x - 1, 2); };
-  function drawFrame(ctx, style, P, imgs, t, rnd) {
-    const n = imgs.length, si = P.shots.findIndex((s) => t >= s.start && t < s.start + s.dur);
+  function drawFrame(ctx, style, P, imgs, t, rnd, text) {
+    const si = P.shots.findIndex((s) => t >= s.start && t < s.start + s.dur);
     ctx.filter = "none"; ctx.globalAlpha = 1;
-    if (t >= P.end) { // end card
+    if (t >= P.end) { endCard(ctx, style, P, t); return; }
+    const s = P.shots[si] || P.shots[0], tt = t - s.start, p = tt / s.dur, k = si > 0 ? si : 0;
+    const tr = si > 0 ? s.tr : "hard cut";
+    if (tr === "fade" && tt < 0.22) { content(ctx, style, P, imgs, k - 1, 1, rnd); ctx.globalAlpha = tt / 0.22; content(ctx, style, P, imgs, k, p, rnd); ctx.globalAlpha = 1; }
+    else if (tr === "whip/zoom" && tt < 0.18) {
+      const e = ease(tt / 0.18); ctx.fillStyle = "#000"; ctx.fillRect(0, 0, W, H);
+      ctx.save(); ctx.filter = "blur(14px)"; ctx.translate(-e * W, 0); content(ctx, style, P, imgs, k - 1, 1, rnd); ctx.restore();
+      ctx.save(); ctx.filter = "blur(" + Math.round(14 * (1 - e)) + "px)"; ctx.translate((1 - e) * W, 0); content(ctx, style, P, imgs, k, p, rnd); ctx.restore(); ctx.filter = "none";
+    } else content(ctx, style, P, imgs, k, p, rnd);
+    if (tr === "flash" && tt < 0.12) { ctx.fillStyle = `rgba(255,255,255,${0.85 * (1 - tt / 0.12)})`; ctx.fillRect(0, 0, W, H); }
+    if (tr === "dip to black" && tt < 0.15) { ctx.fillStyle = `rgba(0,0,0,${1 - tt / 0.15})`; ctx.fillRect(0, 0, W, H); }
+    if (text && t >= text.from && t < text.to) hookText(ctx, text, t);
+  }
+  function hookText(ctx, T, t) { // TikTok-style caption: bold white with a black outline
+    const a = clamp((t - T.from) / 0.15, 0, 1); ctx.save(); ctx.globalAlpha = a;
+    ctx.font = "800 68px Inter, 'Helvetica Neue', Arial, sans-serif"; ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.lineJoin = "round";
+    const words = T.text.split(/\s+/), lines = []; let cur = "";
+    for (const w of words) { const test = cur ? cur + " " + w : w; if (ctx.measureText(test).width > W * 0.84 && cur) { lines.push(cur); cur = w; } else cur = test; }
+    if (cur) lines.push(cur);
+    const lh = 84, y0 = H * T.y - ((lines.length - 1) * lh) / 2;
+    lines.forEach((l, i) => { ctx.lineWidth = 12; ctx.strokeStyle = "rgba(0,0,0,.9)"; ctx.strokeText(l, W / 2, y0 + i * lh); ctx.fillStyle = "#fff"; ctx.fillText(l, W / 2, y0 + i * lh); });
+    ctx.restore();
+  }
+  function endCard(ctx, style, P, t) {
       const k = ease((t - P.end) / 0.35);
       ctx.fillStyle = style === "hardcut" ? "#fff" : "#000"; ctx.fillRect(0, 0, W, H);
       ctx.fillStyle = style === "hardcut" ? "#000" : "#fff"; ctx.globalAlpha = k;
       ctx.font = "800 120px Inter, 'Helvetica Neue', Arial, sans-serif"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
-      ctx.fillText("NICHE.CO", W / 2, H / 2 + (1 - k) * 40); ctx.globalAlpha = 1; return;
-    }
-    const s = P.shots[si] || P.shots[0], p = (t - s.start) / s.dur, img = imgs[si % n];
+      ctx.fillText("NICHE.CO", W / 2, H / 2 + (1 - k) * 40); ctx.globalAlpha = 1;
+  }
+  function content(ctx, style, P, imgs, si, p, rnd) { // one shot of the chosen style
+    const n = imgs.length, img = imgs[si % n];
     if (style === "hardcut") {
       ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, W, H);
       contain(ctx, img, W / 2, H / 2, W * 0.86, H * 0.72, 1 + 0.05 * p);
     } else if (style === "fastcolour") {
       ctx.filter = "saturate(1.35) contrast(1.08)"; cover(ctx, img, 0, 0, W, H, 1.12 - 0.1 * ease(p)); ctx.filter = "none";
-      if (si % 4 === 0 && p < 0.12) { ctx.fillStyle = `rgba(255,255,255,${0.7 * (1 - p / 0.12)})`; ctx.fillRect(0, 0, W, H); }
     } else if (style === "bwmood") {
       ctx.fillStyle = "#0d0d0d"; ctx.fillRect(0, 0, W, H);
       const cols = 2, rows = 3, gw = (W - 60) / cols, gh = (H - 80) / rows;
@@ -200,11 +279,21 @@
     try {
       const L = opts.useLearned === false ? null : learned();
       const style = chooseStyle(opts.style || $("#vlStyle").value, L);
-      const seconds = +(opts.seconds || $("#vlLen").value || 10);
+      const lenSel = opts.seconds || $("#vlLen").value || "auto";
+      const seconds = lenSel === "auto" ? (L && L.dur ? clamp(Math.round(L.dur), 6, 30) : 10) : +lenSel;
       const P = plan(style, L, seconds);
+      const applied = [];
+      if (L && L.shot) applied.push("cut every " + fmt(P.shot, 2) + "s at " + P.bpm + " BPM");
+      if (lenSel === "auto" && L && L.dur) applied.push(seconds + "s long");
+      if (P.dropAt) applied.push("slow build, drop at " + fmt(P.dropAt) + "s");
+      const trUsed = [...new Set(P.shots.slice(1).map((x) => x.tr).filter((x) => x !== "hard cut"))]; if (L && L.transitions && trUsed.length) applied.push(trUsed.join(" + ") + " transitions");
       progress(0, "Picking photos…");
       const imgs = await loadImages(await listFiles(), style === "duo" ? P.shots.length * 2 : P.shots.length);
       if (!imgs.length) return { error: "I couldn't find any photos in the niche.co folder. Add some product photos to it." };
+      if (L && L.faceFirst != null && Math.max(L.faceFirst, L.personFirst || 0) >= 0.5) { progress(0, "Finding a photo with a face to open on…"); if (await personFirst(imgs)) applied.push("opens on a person"); }
+      const words = (opts.text != null ? opts.text : $("#vlText").value || "").trim();
+      const text = words ? { text: words, from: clamp(L && L.textTime != null ? L.textTime : 0.2, 0, 1.5), to: 0, y: { top: 0.2, middle: 0.42, bottom: 0.74 }[(L && L.textPos) || "top"] } : null;
+      if (text) { text.to = L && L.textWhole > 0.6 ? P.end : Math.min(P.end, text.from + 3); applied.push("hook text at the " + ((L && L.textPos) || "top")); }
       const codec = await pickCodec(); if (!codec) return { error: "This laptop's browser has no H.264 video encoder." };
       const target = new Mp4Muxer.ArrayBufferTarget();
       const muxer = new Mp4Muxer.Muxer({ target, video: { codec: "avc", width: W, height: H, frameRate: FPS }, fastStart: "in-memory" });
@@ -217,7 +306,7 @@
       for (let i = 0; i < frames; i++) {
         if (encErr) throw encErr;
         if (VL.stop) { try { enc.close(); } catch (e) {} imgs.forEach((b) => b.close && b.close()); return { error: "Stopped. No video was saved." }; }
-        drawFrame(ctx, style, P, imgs, i / FPS, rnd);
+        drawFrame(ctx, style, P, imgs, i / FPS, rnd, text);
         const vf = new VideoFrame(cv, { timestamp: Math.round((i * 1e6) / FPS), duration: Math.round(1e6 / FPS) });
         enc.encode(vf, { keyFrame: i % (FPS * 2) === 0 }); vf.close();
         while (enc.encodeQueueSize > 6) await sleep(4);
@@ -229,7 +318,7 @@
       const name = await nextName(videos);
       const fh = await videos.getFileHandle(name, { create: true }), w = await fh.createWritable(); await w.write(blob); await w.close();
       store.set("vlabLastStyle", style);
-      VL.last = { name, url: URL.createObjectURL(blob), style, secs: P.total, bpm: P.bpm, shot: P.shot, learned: !!L };
+      VL.last = { name, url: URL.createObjectURL(blob), style, secs: P.total, bpm: P.bpm, shot: P.shot, learned: !!L, applied, textTip: !text && L && L.textShare >= 0.5 ? (L.hooks[0] || "") : null };
       progress(1, "Saved " + name);
       return VL.last;
     } catch (e) { return { error: "The video failed: " + (e.message || e) }; }
@@ -257,19 +346,34 @@
       }
       lums.push(ls / lum.length); sats.push(ss / lum.length);
       if (prev) { let df = 0; for (let k = 0; k < rgb.length; k += 4) df += Math.abs(rgb[k] - prev[k]) + Math.abs(rgb[k + 1] - prev[k + 1]) + Math.abs(rgb[k + 2] - prev[k + 2]); diffs.push(df / (lum.length * 765)); times.push(t - step / 2); }
-      prev = rgb; if (onProg && i % 10 === 0) onProg(t / dur * 0.8);
+      prev = rgb; if (onProg && i % 10 === 0) onProg(t / dur * 0.45);
     }
-    URL.revokeObjectURL(url);
     const md = median(diffs) || 0, thr = Math.max(0.09, md * 4);
     const cuts = []; diffs.forEach((df, k) => { if (df > thr && (!cuts.length || times[k] - cuts[cuts.length - 1] > 0.15)) cuts.push(times[k]); });
+    // slow fades have no single big jump: look for a big change spread over about a third of a second
+    const win = Math.max(3, Math.round(0.33 / step));
+    for (let k = 0; k + win <= diffs.length; k++) {
+      let sum = 0; for (let j = k; j < k + win; j++) sum += diffs[j];
+      const mid = times[k + (win >> 1)];
+      if (sum > thr * 1.6 && !cuts.some((c) => Math.abs(c - mid) < 0.45)) cuts.push(mid);
+    }
+    cuts.sort((a, b) => a - b);
     const calm = diffs.filter((df) => df <= thr);
     const palette = [...pal.entries()].sort((a, b) => b[1] - a[1]).slice(0, 5).map(([k]) => "#" + [(k >> 6) & 7, (k >> 3) & 7, k & 7].map((q) => ((q << 5) + 16).toString(16).padStart(2, "0")).join(""));
-    const m = { duration: dur, cuts: cuts.length, cutTimes: cuts, shotAvg: dur / (cuts.length + 1), cutsPerSec: cuts.length / dur, firstCut: cuts.length ? cuts[0] : dur,
+    let tr = null, vis = null;
+    if (window.VideoSense) {
+      try { if (onProg) onProg(0.5); tr = await VideoSense.transitions(v, cuts, () => VL.stop); } catch (e) {}
+      if (VL.stop) { URL.revokeObjectURL(url); return null; }
+      try { vis = await VideoSense.watch(v, dur, (q) => onProg && onProg(0.55 + q * 0.3), () => VL.stop); } catch (e) {}
+      if (VL.stop) { URL.revokeObjectURL(url); return null; }
+    }
+    URL.revokeObjectURL(url);
+    const m = { duration: dur, cuts: cuts.length, cutTimes: cuts, transitions: tr, shotAvg: dur / (cuts.length + 1), cutsPerSec: cuts.length / dur, firstCut: cuts.length ? cuts[0] : dur,
       bwShare: sats.filter((s) => s < 0.07).length / sats.length, brightness: lums.reduce((a, b) => a + b, 0) / lums.length, motion: calm.length ? calm.reduce((a, b) => a + b, 0) / calm.length : 0, palette, w: v.videoWidth, h: v.videoHeight };
     if (onProg) onProg(0.85);
     const a = await analyseAudio(file, cuts);
     if (onProg) onProg(1);
-    return { m, a };
+    return { m, a, v: vis, ver: 2 };
   }
   async function analyseAudio(file, cuts) {
     let buf;
@@ -287,13 +391,21 @@
       s /= onset.length - L; if (s > best) { best = s; bestLag = lag; }
     }
     let bpm = 6000 / bestLag; while (bpm < 85) bpm *= 2; while (bpm > 170) bpm /= 2;
-    const lag = 6000 / bpm; let phase = 0, pb = -1;
     // music hits = strong onset peaks; a cut is "on the beat" when it lands within 80 ms of one
     const mean = onset.reduce((x, y) => x + y, 0) / onset.length, sd = Math.sqrt(onset.reduce((x, y) => x + (y - mean) ** 2, 0) / onset.length);
     const hits = []; for (let i = 1; i < onset.length - 1; i++) if (onset[i] > mean + 2 * sd && onset[i] >= onset[i - 1] && onset[i] >= onset[i + 1]) hits.push(i / 100);
     const onBeat = cuts.length && hits.length ? cuts.filter((t) => hits.some((h) => Math.abs(h - t) < 0.08)).length / cuts.length : null;
     const first = env.findIndex((e) => e > rms * 0.5);
-    return { bpm: Math.round(bpm), loudness: Math.round(20 * Math.log10(rms)), cutsOnBeat: onBeat, soundStart: first < 0 ? null : first / 100 };
+    // the drop: the biggest jump in loudness (one second after vs one second before)
+    let drop = null, jump = 0;
+    for (let i = 100; i < env.length - 100; i += 5) { let b = 0, f = 0; for (let k = i - 100; k < i; k++) b += env[k]; for (let k = i; k < i + 100; k++) f += env[k]; const j = (f - b) / 100; if (j > jump) { jump = j; drop = i / 100; } }
+    if (jump < rms * 0.35) drop = null;
+    const secs = env.length / 100;
+    const fasterAfter = drop != null && cuts.length >= 2 ? cuts.filter((t) => t >= drop).length / Math.max(0.5, secs - drop) > 1.3 * (cuts.filter((t) => t < drop).length / Math.max(0.5, drop)) : null;
+    // voice or music (an estimate): speech has gaps and a weak steady beat, music is continuous with a strong beat
+    const live = env.slice(Math.max(0, first)), gaps = live.filter((e) => e < rms * 0.15).length / Math.max(1, live.length), ac0 = onset.reduce((x, y) => x + y * y, 0) / onset.length, beatStrength = ac0 ? best / ac0 : 0;
+    const kind = gaps > 0.18 && beatStrength < 0.35 ? "voice" : gaps < 0.1 && beatStrength >= 0.2 ? "music" : "voice and music";
+    return { bpm: Math.round(bpm), loudness: Math.round(20 * Math.log10(rms)), cutsOnBeat: onBeat, soundStart: first < 0 ? null : first / 100, drop, fasterAfter, kind };
   }
   function describe(r) {
     const m = r.m, a = r.a, out = [];
@@ -302,6 +414,15 @@
     out.push(m.bwShare > 0.6 ? "Mostly black and white" : m.bwShare > 0.2 ? "Mix of B&W and colour" : "Full colour");
     if (a && a.bpm) out.push(a.bpm + " BPM" + (a.cutsOnBeat != null ? ", " + Math.round(a.cutsOnBeat * 100) + "% of cuts on the beat" : "") + (a.soundStart > 0.5 ? ", sound starts late (" + fmt(a.soundStart) + "s)" : ""));
     else out.push(a && a.silent ? "No sound (silent video)" : "No audio track");
+    if (a && a.kind) out.push("Sounds like " + a.kind + (a.drop != null ? ", drop at " + fmt(a.drop) + "s" + (a.fasterAfter ? " (cuts speed up after)" : "") : ""));
+    if (m.transitions && m.transitions.length) { const c = {}; m.transitions.forEach((x) => (c[x] = (c[x] || 0) + 1)); out.push("Transitions: " + Object.entries(c).sort((x, y) => y[1] - x[1]).map(([k, v]) => k + (v > 1 ? " ×" + v : "")).join(", ")); }
+    const v = r.v;
+    if (v && v.ok && v.ok.text) out.push(v.text.length ? "Text (" + v.textPos + ", from " + fmt(v.firstText) + "s): “" + v.hook.slice(0, 60) + "”" : "No on-screen text");
+    if (v && v.ok && v.ok.faces) {
+      out.push(v.faceFirst ? "Face in the first second" + (v.closeUps ? ", close-ups" : "") : v.faceFrames ? "Faces later on" : "No faces");
+      out.push(v.personFrames ? "Person on screen in " + Math.round((v.personFrames / v.frames) * 100) + "% of frames" : "Product only, no person");
+      const ob = Object.keys(v.objects || {}); if (ob.length) out.push("Also spotted: " + ob.slice(0, 3).join(", "));
+    }
     return out;
   }
   async function analyseNew(all) {
@@ -311,7 +432,7 @@
     try {
       VL.stop = false;
       const vids = (await listFiles()).filter((f) => VID_RE.test(f.name) && /^inspiration\//i.test(f.path));
-      const done = new Set(VL.analyses.map((a) => a.path + "|" + a.size));
+      const done = new Set(VL.analyses.filter((a) => a.ver >= 2).map((a) => a.path + "|" + a.size)); // older notes get re-studied with the new checks
       let n = 0;
       for (const f of vids) {
         if (VL.stop) break;
@@ -347,6 +468,13 @@
     if (L.bpm) lines.push("Their music sits around " + Math.round(L.bpm) + " BPM" + (L.onBeat != null ? ", with " + Math.round(L.onBeat * 100) + " percent of cuts on the beat" : "") + ".");
     if (L.bw != null) lines.push(L.bw > 0.5 ? "Most of them are black and white." : L.bw > 0.2 ? "They mix black and white with colour." : "They're mostly full colour.");
     if (L.dur) lines.push("Typical length is " + Math.round(L.dur) + " seconds.");
+    if (L.transitions) { const t = Object.entries(L.transitions).sort((x, y) => y[1] - x[1]); const pl = (x) => (x === "flash" ? "flashes" : x === "whip/zoom" ? "whip or zoom moves" : x === "dip to black" ? "dips to black" : x + "s");
+      lines.push("Transitions: mostly " + pl(t[0][0]) + (t[1] ? ", then " + pl(t[1][0]) + " (" + Math.round(t[1][1] * 100) + " percent)" : "") + "."); }
+    if (L.drop != null) lines.push("The beat drops around " + fmt(L.drop) + " seconds" + (L.fasterAfterDrop >= 0.5 ? ", and the cuts speed up after it." : "."));
+    if (L.sound) lines.push(L.sound === "music" ? "They run on music, not talking." : L.sound === "voice" ? "Most are voice-led, someone talking." : "They mix voice and music.");
+    if (L.textShare != null) lines.push(L.textShare >= 0.5 ? Math.round(L.textShare * 100) + " percent have on-screen text, usually at the " + L.textPos + ", in by " + fmt(L.textTime) + " seconds" + (L.hooks[0] ? ", like: " + L.hooks[0].slice(0, 50) : "") + "." : "Most don't use on-screen text.");
+    if (L.faceFirst != null) lines.push(L.faceFirst >= 0.5 ? "Most show a face in the first second." : (L.personFirst >= 0.5 ? "Most open on a person wearing the clothes." : "Most open on the product, not a face."));
+    if (L.person != null) lines.push(L.person > 0.05 ? "Clothes are on a person in about " + Math.round(L.person * 100) + " percent of shots." : "They show the product only, no people.");
     return { L, lines };
   }
 
@@ -361,7 +489,7 @@
     $("#vlMake").disabled = $("#vlStudy").disabled = VL.busy;
     $("#vlStop").hidden = !VL.busy;
     const out = $("#vlOut");
-    out.innerHTML = VL.last ? `<video src="${VL.last.url}" controls muted loop playsinline style="width:100%;max-height:420px;background:#000;margin-top:10px"></video><div class="mu" style="margin-top:6px">${esc(VL.last.name)} · ${esc(STYLES[VL.last.style])} · ${fmt(VL.last.secs)}s · cut every ${fmt(VL.last.shot, 2)}s at ${VL.last.bpm} BPM${VL.last.learned ? " (from what works)" : ""} · saved in videos</div>` : "";
+    out.innerHTML = VL.last ? `<video src="${VL.last.url}" controls muted loop playsinline style="width:100%;max-height:420px;background:#000;margin-top:10px"></video><div class="mu" style="margin-top:6px">${esc(VL.last.name)} · ${esc(STYLES[VL.last.style])} · ${fmt(VL.last.secs)}s · cut every ${fmt(VL.last.shot, 2)}s at ${VL.last.bpm} BPM${VL.last.learned ? " (from what works)" : ""} · saved in videos${VL.last.applied && VL.last.applied.length ? "<br>Learned: " + esc(VL.last.applied.join(", ")) : ""}${VL.last.textTip != null ? "<br>Tip: videos that work use on-screen text" + (VL.last.textTip ? " (like “" + esc(VL.last.textTip.slice(0, 50)) + "”)" : "") + ". Type a hook line in the text box." : ""}</div>` : "";
     const ins = insights();
     $("#vlLearn").innerHTML = ins ? ins.lines.map((l) => `<div class="rowx"><span>${esc(l)}</span></div>`).join("") + `<div class="mu" style="margin-top:4px">Based on ${ins.L.n} video${ins.L.n > 1 ? "s" : ""} marked as working (everything in the inspiration folder counts unless you mark it 👎).</div>`
       : '<div class="mu">Drop videos you like into niche.co/inspiration and hit Study. Jarvis learns their pacing, hook, colour and beat, and new videos follow it.</div>';
@@ -385,10 +513,10 @@
   }
   async function voiceMake(t) {
     if (!VL.ready && !(VL.dir && (await checkPerm(false)))) return say(VL.dir ? "Click Reconnect in the Video Lab panel, then ask me again." : "Connect your niche.co folder in the Video Lab panel first.");
-    const st = styleFrom(t), m = t.match(/(\d{1,2})\s*(?:second|sec)/i);
+    const st = styleFrom(t), m = t.match(/(\d{1,2})\s*(?:second|sec)/i), tx = t.match(/\b(?:with (?:the )?(?:text|words|caption)|saying|that says)\s+["“']?(.+?)["”']?\s*$/i);
     say("On it. Making a " + (st === "auto" ? "" : STYLES[st].toLowerCase() + " ") + "video for TikTok and Instagram.");
     $("#vlP").scrollIntoView({ behavior: "smooth", block: "center" });
-    const r = await makeVideo({ style: st, seconds: m ? clamp(+m[1], 6, 30) : undefined });
+    const r = await makeVideo({ style: st, seconds: m ? clamp(+m[1], 6, 30) : undefined, text: tx ? tx[1] : undefined });
     return say(r.error ? r.error : "Your video is done. It's saved as " + r.name.replace(".mp4", "") + " in your niche.co videos folder.");
   }
   async function voiceStudy() {
