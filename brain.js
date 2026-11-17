@@ -29,6 +29,7 @@ How to talk:
 Actions:
 - Before book_wash, add_calendar_event or log_kite_payment, read the details back in one sentence and ask "Shall I go ahead?". Only call the tool after he clearly says yes in his next message.
 - make_video, study_videos and lookups need no confirmation. For make_video, if videos that work use on-screen text and Hayden gave no hook line, you may suggest one first.
+- The dashboard is minimal: only the core shows until something is pulled up. When your answer is about his day, calendar, weather, emails, money, the shop, socials, videos or Sleek Auto bookings, also call show_screen with the matching screen. Use "close" when he says he's done.
 - Each user message starts with the current date and time in square brackets; use it to work out "today", "tomorrow", weekdays and so on. Dates for tools are YYYY-MM-DD, times are 24-hour HH:MM.`;
 
   const obj = (props, req) => ({ type: "object", properties: props, required: req || [], additionalProperties: false });
@@ -54,6 +55,7 @@ Actions:
       seconds: { type: "integer", description: "Length, 6-30; 0 means use the learned length" },
       text: { type: "string", description: "Hook text to show on screen, or empty string for none" },
     }, ["style", "seconds", "text"]) },
+    { name: "show_screen", description: "Pull up a screen on Hayden's dashboard next to the core, or close it. Use it when your answer is about one of these areas, or when he asks to see something.", strict: true, input_schema: obj({ screen: { type: "string", enum: ["today", "calendar", "weather", "inbox", "money", "shop", "social", "videos", "bookings", "alarm", "settings", "whatsapp", "close"] } }, ["screen"]) },
     { name: "study_videos", description: "Study new videos in the niche.co/inspiration folder and return what makes them work.", strict: true, input_schema: obj({}) },
   ];
   const webSearch = () => (B.model === "claude-haiku-5-5" ? { type: "web_search_20250305", name: "web_search", max_uses: 3 } : { type: "web_search_20260209", name: "web_search", max_uses: 3 });
@@ -128,6 +130,11 @@ Actions:
         say("On it. Making the video now.");
         const r = await VideoLab.makeVideo({ style: input.style, seconds: input.seconds ? Math.max(6, Math.min(30, input.seconds)) : "auto", text: input.text || "" });
         return r.error ? { error: r.error } : { saved_as: r.name, folder: "niche.co/videos", style: r.style, seconds: Math.round(r.secs), learned_and_applied: r.applied || [], tip: r.textTip != null ? "Videos that work use on-screen hook text" : null };
+      }
+      case "show_screen": {
+        if (!window.Screens) return { error: "Screens not loaded" };
+        if (input.screen === "close") { Screens.close(); return { closed: true }; }
+        return { shown: Screens.show(input.screen) };
       }
       case "study_videos": {
         if (!window.VideoLab) return { error: "Video lab not loaded" };

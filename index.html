@@ -81,6 +81,32 @@ input,select{width:100%;background:#030b14;color:var(--ice);border:1px solid var
 .ev .when{font-family:var(--f-mono);color:var(--cyan);min-width:4.6em;font-size:12.5px}.ev .what{flex:1;min-width:0}
 .ev .acts{display:flex;gap:4px}.ev .acts button{min-height:28px;padding:5px 8px;font-size:9px}
 .dayh{font:600 10px/1 var(--f-mono);letter-spacing:.14em;text-transform:uppercase;color:var(--mu);margin:12px 0 2px}
+/* ---- minimal mode: just the core; screens slide in on request ---- */
+.hright{display:flex;align-items:flex-end;gap:14px}
+.viewbtn{min-height:30px;padding:7px 10px;font-size:9.5px}
+.glance{text-align:center;font:500 11px/1.6 var(--f-mono);letter-spacing:.12em;text-transform:uppercase;color:var(--mu);margin-top:8px;min-height:1.6em}
+#dock{display:none}
+body.min .grid{grid-template-columns:minmax(0,1fr);max-width:620px;transition:max-width .25s}
+body.min .grid>.col:not(.core),body.min .core>.panel:not(#coreP){display:none}
+body.min #coreP{background:transparent;border-color:transparent;clip-path:none}
+body.min #coreP::before{display:none}
+#stage{position:fixed;z-index:20;right:max(16px,env(safe-area-inset-right,0px));top:92px;bottom:calc(76px + env(safe-area-inset-bottom,0px));width:min(460px,calc(100% - 32px));display:flex;flex-direction:column;gap:12px;animation:slidein .22s ease-out}
+#stage[hidden]{display:none}
+.stage-h{display:flex;justify-content:space-between;align-items:center;gap:10px}
+.stage-h h2{margin:0;font:600 13px/1 var(--f-hud);letter-spacing:.26em;text-transform:uppercase;color:var(--cyan)}
+.stage-h button{min-height:32px;padding:8px 12px;font-size:10px}
+#stageBody{overflow-y:auto;display:flex;flex-direction:column;gap:14px;min-height:0;padding-right:4px;scrollbar-width:thin}
+@keyframes slidein{from{opacity:0;transform:translateX(24px)}to{opacity:1;transform:none}}
+body.min #dock{display:flex;position:fixed;z-index:21;left:50%;transform:translateX(-50%);bottom:calc(14px + env(safe-area-inset-bottom,0px));gap:4px;padding:6px;background:rgba(6,17,29,.82);border:1px solid var(--line);backdrop-filter:blur(8px);max-width:calc(100% - 32px);overflow-x:auto}
+#dock button{min-height:34px;padding:8px 11px;font-size:9.5px;letter-spacing:.18em;background:transparent;color:var(--mu);border:0;white-space:nowrap}
+#dock button:hover,#dock button.on{color:var(--cyan)}
+#dock button.on{box-shadow:inset 0 -2px 0 var(--cyan)}
+body.min{padding-bottom:calc(90px + env(safe-area-inset-bottom,0px))}
+@media (max-width:980px){
+  #stage{left:max(12px,env(safe-area-inset-left,0px));right:max(12px,env(safe-area-inset-right,0px));width:auto;top:auto;height:68vh;background:var(--bg);border-top:1px solid var(--cyan-dim);padding:12px 4px 0;animation:slideup .22s ease-out}
+}
+@keyframes slideup{from{opacity:0;transform:translateY(30px)}to{opacity:1;transform:none}}
+@media (min-width:981px){body.min.open .grid{max-width:calc(100% - 490px);margin-left:0}}
 .todo{border-left:2px solid var(--warn);padding:6px 0 6px 10px;margin:6px 0;color:var(--mu);font-size:12.5px}
 /* alarm overlay */
 #wake{position:fixed;inset:0;z-index:50;background:radial-gradient(circle at 50% 40%,rgba(41,200,255,.25),transparent 60%),var(--bg);display:grid;place-items:center;text-align:center;padding:24px}
@@ -99,7 +125,7 @@ input,select{width:100%;background:#030b14;color:var(--ice);border:1px solid var
 
 <header>
   <div class="brand">J.A.R.V.I.S<small>LANGEBAAN · HAYDEN'S SYSTEMS</small></div>
-  <div class="clock"><b id="clk">--:--</b><span id="dte"></span></div>
+  <div class="hright"><button type="button" class="ghost viewbtn" id="viewBtn" title="Switch between the minimal screen and the full dashboard">Full view</button><div class="clock"><b id="clk">--:--</b><span id="dte"></span></div></div>
 </header>
 
 <div class="grid">
@@ -147,7 +173,7 @@ input,select{width:100%;background:#030b14;color:var(--ice);border:1px solid var
       <button type="button" class="ghost" id="aiForget" hidden style="margin-top:8px">Remove key</button>
     </div>
 
-    <div class="panel">
+    <div class="panel" id="wxP">
       <div class="ph"><h2>Weather · Wind</h2><span class="chip wait" id="wxChip">Loading</span></div>
       <div class="kv3">
         <div><div class="lbl">Now</div><div class="num" id="wxT">--°</div><div class="mu" id="wxD">—</div></div>
@@ -159,16 +185,16 @@ input,select{width:100%;background:#030b14;color:var(--ice);border:1px solid var
       <div class="rowx" style="margin-top:6px"><span class="lbl">Kite call</span><span class="verdict" id="kite">—</span></div>
     </div>
 
-    <div class="panel">
+    <div class="panel" id="schP">
       <div class="ph"><h2>Today's schedule</h2><span class="chip" id="schChip">Sleek Auto</span></div>
       <div class="lbl">Sleek Auto washes</div>
-      <div class="list" id="washList"><div class="mu">Sign in to Sleek Auto (right panel) to load your washes.</div></div>
+      <div class="list" id="washList"><div class="mu">Sign in to Sleek Auto (Settings) to load your washes.</div></div>
       <div class="lbl" style="margin-top:12px">Kite lessons · Calendar</div>
-      <div class="list" id="calList"><div class="mu">Connect Google (Inbox panel) to load your lessons and calendar.</div></div>
+      <div class="list" id="calList"><div class="mu">Connect Google (Inbox) to load your lessons and calendar.</div></div>
       <a class="mu" href="https://capesports.tideforce.app/login" target="_blank" rel="noopener">Open TideForce →</a>
     </div>
 
-    <div class="panel">
+    <div class="panel" id="mailP">
       <div class="ph"><h2>Inbox triage</h2><span class="chip off" id="gChip">Not connected</span></div>
       <div id="gConnect"><button id="gBtn" type="button">Connect Google</button><div class="mu" style="margin-top:8px">Read-only. Jarvis can look at your mail and calendar, never send, delete or change anything.</div></div>
       <div id="mailBox" hidden>
@@ -186,9 +212,10 @@ input,select{width:100%;background:#030b14;color:var(--ice);border:1px solid var
 
   <!-- CENTRE: the core -->
   <section class="col core">
-    <div class="panel" style="padding-bottom:18px">
+    <div class="panel" id="coreP" style="padding-bottom:18px">
       <div class="orbwrap"><canvas id="orb" width="840" height="840" aria-label="Jarvis core"></canvas></div>
       <div class="state" id="state">Online</div>
+      <div class="glance" id="glance"></div>
       <div class="say" id="say">Good day, Hayden. All systems online.</div>
       <div class="heard" id="heard"></div>
       <div class="ask">
@@ -256,14 +283,14 @@ input,select{width:100%;background:#030b14;color:var(--ice);border:1px solid var
 
   <!-- RIGHT: money + social -->
   <section class="col">
-    <div class="panel">
+    <div class="panel" id="nwP">
       <div class="ph"><h2>Net worth</h2><span class="chip wait">Later</span></div>
       <div class="lbl">Total assets</div>
       <div class="num" style="font-size:32px">R —</div>
       <div class="mu">We'll connect your accounts when you're ready.</div>
     </div>
 
-    <div class="panel">
+    <div class="panel" id="incP">
       <div class="ph"><h2>Income</h2><span class="chip" id="incChip"></span></div>
       <div class="kv">
         <div><div class="lbl">Today</div><div class="num" id="incDay">R0</div></div>
@@ -289,7 +316,7 @@ input,select{width:100%;background:#030b14;color:var(--ice);border:1px solid var
       <div class="mu" id="shMsg" style="margin-top:8px">Needs the Shopify relay set up in Supabase, and Sleek Auto signed in.</div>
     </div>
 
-    <div class="panel">
+    <div class="panel" id="saP">
       <div class="ph"><h2>Sleek Auto link</h2><span class="chip off" id="saChip">Signed out</span></div>
       <div id="saBox">
         <form class="form" id="saF">
@@ -301,7 +328,7 @@ input,select{width:100%;background:#030b14;color:var(--ice);border:1px solid var
       </div>
     </div>
 
-    <div class="panel">
+    <div class="panel" id="kiteP">
       <div class="ph"><h2>Log kite EFT</h2><span class="chip">This phone</span></div>
       <form class="form" id="kF">
         <input id="kA" type="number" min="0" step="1" placeholder="Amount (R)">
@@ -312,7 +339,7 @@ input,select{width:100%;background:#030b14;color:var(--ice);border:1px solid var
       <div class="list" id="kList" style="margin-top:8px"></div>
     </div>
 
-    <div class="panel">
+    <div class="panel" id="soP">
       <div class="ph"><h2>niche.co · Social</h2><span class="chip wait" id="soChip">Loading</span></div>
       <div class="kv">
         <div><div class="lbl">TikTok · <span id="ttH">@niche.co</span></div><div class="num" id="ttF">—</div><div class="mu">followers <span id="ttFd"></span></div></div>
@@ -327,12 +354,15 @@ input,select{width:100%;background:#030b14;color:var(--ice);border:1px solid var
       <div class="mu" id="soMsg" style="margin-top:6px"></div>
     </div>
 
-    <div class="panel">
+    <div class="panel" id="waP">
       <div class="ph"><h2>WhatsApp bookings</h2><span class="chip wait">Phase 5</span></div>
       <div class="todo">Clients message 066 105 8194, Jarvis offers a slot, books it here and confirms on WhatsApp.</div>
     </div>
   </section>
 </div>
+
+<aside id="stage" hidden aria-live="polite"><div class="stage-h"><h2 id="stageT"></h2><button type="button" class="ghost" id="stageX" aria-label="Close screen">Close</button></div><div id="stageBody"></div></aside>
+<nav id="dock" aria-label="Screens"></nav>
 
 <div id="night" hidden>
   <div>
@@ -468,6 +498,7 @@ document.querySelectorAll(".hint button").forEach(b=>b.onclick=()=>{window.Brain
 /* ===== brain (rule-based until the AI brain is connected) ===== */
 async function handle(raw){
   const t=raw.toLowerCase();
+  if(window.Screens){const sc=Screens.fromVoice(t);if(sc!==undefined){if(sc===null){Screens.close();return say("Done.")}Screens.show(sc);return say(["Here you go.","On screen.","Pulled up."][Math.floor(Math.random()*3)])}}
   // with a brain, Jarvis talks normally and uses its features as tools; set commands are the fallback
   if(window.Brain&&Brain.on()&&!/^\s*(stop|cancel)\b/.test(t)){if(await Brain.handleText(raw))return}
   if(window.VideoLab){
@@ -480,13 +511,14 @@ async function handle(raw){
   if(/\b(add|put|create|schedule|set up|book in|pencil in)\b/.test(t)&&calWord&&!/\bwash\b/.test(t))return cmdCal(raw);
   if(/\b(book|schedule)\b/.test(t))return cmdBook(raw);
   if(/good morning|briefing|wake/.test(t))return briefing();
+  if(/lesson|calendar|appointment|meeting/.test(t)&&!/\bwash/.test(t)){window.Screens&&Screens.show("calendar");}
   if(/lesson|calendar|appointment|meeting/.test(t)&&!/\bwash/.test(t))return say(await calSpeech(t,/lesson/.test(t)&&!/calendar/.test(t)));
-  if(/e-?mail|inbox|\bmail\b|pay|bill|invoice/.test(t))return say(await mailSpeech(true));
-  if(/wind|weather|kite|rain|temperature|hot|cold/.test(t))return say(wxSpeech());
+  if(/e-?mail|inbox|\bmail\b|pay|bill|invoice/.test(t)){window.Screens&&Screens.show("inbox");return say(await mailSpeech(true))}
+  if(/wind|weather|kite|rain|temperature|hot|cold/.test(t)){window.Screens&&Screens.show("weather");return say(wxSpeech())}
   if(/easy lover|music|song|play/.test(t)){say("Playing Easy Lover.");return openSong()}
   if(/tik ?tok|instagram|insta\b|\big\b|social|followers|views|reach/.test(t))return say(socialSpeech(/tik ?tok/.test(t)?"tiktok":/instagram|insta\b|\big\b/.test(t)?"instagram":""));
   if(/niche|shopify|store|shop|orders?\b|sales|best ?sell/.test(t))return say(shopSpeech());
-  if(/money|income|made|earn|revenue|profit/.test(t))return say(incomeSpeech());
+  if(/money|income|made|earn|revenue|profit/.test(t)){window.Screens&&Screens.show("money");return say(incomeSpeech())}
   if(/today|tomorrow|this week|what'?s on|busy|free|schedule|wash|booking|on for|monday|tuesday|wednesday|thursday|friday|saturday|sunday/.test(t)){const w=todaySpeech(t);if(w)await say(w);return say(await calSpeech(t))}
   if(/\btime\b/.test(t))return say("It's "+new Date().toLocaleTimeString("en-ZA",{hour:"2-digit",minute:"2-digit",timeZone:TZ})+".");
   if(/thank/.test(t))return say("Always, sir.");
@@ -1088,4 +1120,5 @@ if("serviceWorker" in navigator)navigator.serviceWorker.register("sw.js").catch(
 <script src="videolab.js"></script>
 <script src="lib/anthropic-sdk.js"></script>
 <script src="brain.js"></script>
+<script src="screens.js"></script>
 </body></html>
