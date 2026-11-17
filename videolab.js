@@ -138,8 +138,8 @@
   }
   /* ---------- video clips: short slices cut on the beat ---------- */
   async function loadClips(files, want) {
+    // only Hayden's own clips folder: never inspiration or anything else (copyright)
     let pool = files.filter((f) => VID_RE.test(f.name) && /^clips\//i.test(f.path));
-    if (!pool.length) pool = files.filter((f) => VID_RE.test(f.name) && !/^(videos|inspiration)\//i.test(f.path) && !/^niche video \d+/i.test(f.name));
     pool = pool.map((v) => [Math.random(), v]).sort((a, b) => a[0] - b[0]).map((x) => x[1]).slice(0, want);
     const out = [];
     for (const f of pool) {
@@ -148,11 +148,82 @@
       try {
         await Promise.race([once(el, "loadedmetadata"), sleep(8000).then(() => { throw new Error("timeout"); })]);
         if (!el.videoWidth || !(el.duration > 1)) throw new Error("unreadable");
-        el.currentTime = Math.min(0.5, el.duration / 2); await once(el, "seeked");
-        out.push({ __clip: true, el, url, name: f.name, width: el.videoWidth, height: el.videoHeight, dur: el.duration });
+        const sc = await scanClip(el);
+        if (!sc) throw new Error("no moving footage");
+        out.push({ __clip: true, el, url, name: f.name, crop: sc.crop, good: sc.good, width: sc.crop.w, height: sc.crop.h, dur: el.duration, cropped: sc.cropped });
       } catch (e) { URL.revokeObjectURL(url); }
     }
     return out;
+  }
+  /* Scan a clip once: find the part of the screen that is real footage (cuts away app buttons, status and
+     tab bars, captions, side icons, black borders) and the moments that are moving (skips paused/frozen bits). */
+  async function scanClip(el) {
+    const vw = el.videoWidth, vh = el.videoHeight, cw = 48, ch = Math.max(24, Math.round((48 * vh) / vw)), N = cw * ch;
+    const hw = 160, hh = Math.max(40, Math.round((160 * vh) / vw)), HN = hw * hh;
+    const c = document.createElement("canvas"); c.width = cw; c.height = ch; const x = c.getContext("2d", { willReadFrequently: true });
+    const hc = document.createElement("canvas"); hc.width = hw; hc.height = hh; const hx = hc.getContext("2d", { willReadFrequently: true });
+    const K = Math.min(40, Math.max(12, Math.round(el.duration * 3))), times = [], frames = [];
+    const hmean = new Float32Array(HN), hsq = new Float32Array(HN); let hk = 0;
+    for (let i = 0; i < K; i++) {
+      const t = 0.05 + (i / (K - 1)) * (el.duration - 0.15); el.currentTime = t; await once(el, "seeked");
+      x.drawImage(el, 0, 0, cw, ch); const d = x.getImageData(0, 0, cw, ch).data, l = new Float32Array(N);
+      for (let j = 0, k = 0; j < N; j++, k += 4) l[j] = (0.299 * d[k] + 0.587 * d[k + 1] + 0.114 * d[k + 2]) / 255;
+      frames.push(l); times.push(t);
+      hx.drawImage(el, 0, 0, hw, hh); const hd = hx.getImageData(0, 0, hw, hh).data;
+      for (let j = 0, k = 0; j < HN; j++, k += 4) { const v = (0.299 * hd[k] + 0.587 * hd[k + 1] + 0.114 * hd[k + 2]) / 255; hmean[j] += v; hsq[j] += v * v; }
+      hk++;
+    }
+    // per sharp pixel: average brightness, how much it changes, and whether it's a crisp edge that never moves
+    const avg = new Float32Array(HN), sd = new Float32Array(HN), still = new Uint8Array(HN);
+    for (let j = 0; j < HN; j++) { avg[j] = hmean[j] / hk; sd[j] = Math.sqrt(Math.max(0, hsq[j] / hk - avg[j] * avg[j])); }
+    for (let y = 1; y < hh - 1; y++) for (let q = 1; q < hw - 1; q++) { const j = y * hw + q; if (sd[j] < 0.03 && Math.abs(avg[j + 1] - avg[j - 1]) + Math.abs(avg[j + hw] - avg[j - hw]) > 0.18) still[j] = 1; }
+    let sy0 = 0, sy1 = hh - 1, sx0 = 0, sx1 = hw - 1;
+    // 1) borders: edge rows/columns that are frozen AND look like app chrome (black/white bars, or text/icons on a bar)
+    const isBar = (cells) => {
+      let dead = 0, lum = 0, edges = 0; for (const j of cells) { if (sd[j] < 0.012) dead++; lum += avg[j]; edges += still[j]; }
+      const n = cells.length; lum /= n;
+      return dead / n > 0.9 && (lum < 0.1 || lum > 0.92 || edges / n > 0.04);
+    };
+    const rowCells = (y) => { const a = []; for (let q = sx0; q <= sx1; q++) a.push(y * hw + q); return a; };
+    const colCells = (q) => { const a = []; for (let y = sy0; y <= sy1; y++) a.push(y * hw + q); return a; };
+    const maxR = Math.floor(hh * 0.35), maxC = Math.floor(hw * 0.35);
+    while (sy0 < maxR && isBar(rowCells(sy0))) sy0++;
+    while (sy1 > hh - 1 - maxR && isBar(rowCells(sy1))) sy1--;
+    while (sx0 < maxC && isBar(colCells(sx0))) sx0++;
+    while (sx1 > hw - 1 - maxC && isBar(colCells(sx1))) sx1--;
+    // 2) overlays on the footage near the edges (tabs, captions, usernames, side icons): crisp still detail that
+    //    stands out from the clip itself. A tripod shot is still everywhere, so it isn't cut.
+    {
+      const cwid = sx1 - sx0 + 1, chgt = sy1 - sy0 + 1, win = Math.max(4, Math.round(cwid * 0.15)), winv = Math.max(4, Math.round(chgt * 0.12));
+      let tot = 0; for (let y = sy0; y <= sy1; y++) for (let q = sx0; q <= sx1; q++) tot += still[y * hw + q];
+      const thr = Math.max(0.12, 3 * (tot / (cwid * chgt)));
+      const rowBad = (y) => { let best = 0, run = 0; for (let q = sx0; q <= sx1; q++) { run += still[y * hw + q]; if (q - sx0 >= win) run -= still[y * hw + q - win]; best = Math.max(best, run); } return best / win > thr; };
+      const colBad = (q) => { let best = 0, run = 0; for (let y = sy0; y <= sy1; y++) { run += still[y * hw + q]; if (y - sy0 >= winv) run -= still[(y - winv) * hw + q]; best = Math.max(best, run); } return best / winv > thr; };
+      const lim = (n) => Math.floor(n * 0.22);
+      let nb = null; for (let y = sy1 - lim(chgt); y <= sy1; y++) if (rowBad(y)) { nb = y; break; }
+      let nt = null; for (let y = sy0 + lim(chgt); y >= sy0; y--) if (rowBad(y)) { nt = y; break; }
+      let nr = null; for (let q = sx1 - lim(cwid); q <= sx1; q++) if (colBad(q)) { nr = q; break; }
+      let nl = null; for (let q = sx0 + lim(cwid); q >= sx0; q--) if (colBad(q)) { nl = q; break; }
+      if (nb != null) sy1 = nb - 2; if (nt != null) sy0 = nt + 2; if (nr != null) sx1 = nr - 2; if (nl != null) sx0 = nl + 2;
+    }
+    const crop = { x: Math.round((sx0 / hw) * vw), y: Math.round((sy0 / hh) * vh), w: Math.round(((sx1 - sx0 + 1) / hw) * vw), h: Math.round(((sy1 - sy0 + 1) / hh) * vh) };
+    // moving moments inside the crop: a paused screen recording (pause button showing) is completely frozen
+    const y0 = Math.floor((sy0 / hh) * ch), y1 = Math.min(ch - 1, Math.ceil(((sy1 + 1) / hh) * ch) - 1), x0 = Math.floor((sx0 / hw) * cw), x1 = Math.min(cw - 1, Math.ceil(((sx1 + 1) / hw) * cw) - 1);
+    const motion = [], bright = [];
+    frames.forEach((l, i) => { let s = 0, m = 0, n = 0; for (let y = y0; y <= y1; y++) for (let q = x0; q <= x1; q++) { const j = y * cw + q; s += l[j]; if (i) m += Math.abs(l[j] - frames[i - 1][j]); n++; } bright.push(s / n); if (i) motion.push(m / n); });
+    const good = []; let st = null;
+    for (let i = 0; i < motion.length; i++) {
+      const ok = motion[i] > 0.0015 && bright[i] > 0.04 && bright[i + 1] > 0.04;
+      if (ok && st == null) st = times[i]; if (!ok && st != null) { good.push([st, times[i]]); st = null; }
+    }
+    if (st != null) good.push([st, times[times.length - 1]]);
+    if (!good.length) return null;
+    return { crop, good, cropped: crop.w < vw * 0.97 || crop.h < vh * 0.97 };
+  }
+  function pickSeg(clip, need) { // a start time inside a moving stretch, long enough if possible
+    const fits = clip.good.filter(([a, b]) => b - a >= need), pool = fits.length ? fits : clip.good.slice().sort((p, q) => q[1] - q[0] - (p[1] - p[0])).slice(0, 1);
+    const [a, b] = pool[Math.floor(Math.random() * pool.length)];
+    return a + Math.random() * Math.max(0, b - a - need);
   }
   function placeClips(style, P, imgs, clips) { // full-screen slots alternate photo / clip; vintage plays a clip behind each page
     if (!clips.length || ["collage", "bwmood", "duo"].includes(style)) return 0;
@@ -161,7 +232,7 @@
     for (const i of slots) {
       if (i >= n) break;
       const clip = clips[c++ % clips.length], need = style === "vintage" ? PAGE * P.shot : (P.shots[i] || { dur: P.shot }).dur;
-      imgs[i] = { ...clip, seg: clip.dur > need + 0.6 ? 0.3 + Math.random() * (clip.dur - need - 0.6) : 0 }; used++;
+      imgs[i] = { ...clip, seg: pickSeg(clip, need) }; used++;
     }
     imgs.hasClips = used > 0; return used;
   }
@@ -174,7 +245,8 @@
     for (const [m, st] of jobs) {
       if (!m || !m.__clip) continue;
       // clip motion updates 15 times a second (each frame held twice): half the decoding, same look in a fast edit
-      const len = Math.max(0.5, m.dur - m.seg - 0.05), local = m.seg + Math.floor(((t - st) % len) * 15) / 15;
+      const span = m.good.find(([a, b]) => m.seg >= a - 0.01 && m.seg <= b) || [m.seg, m.dur - 0.05];
+      const len = Math.max(0.5, span[1] - m.seg), local = m.seg + Math.floor(((t - st) % len) * 15) / 15;
       if (Math.abs(m.el.currentTime - local) > 0.01) { m.el.currentTime = local; await once(m.el, "seeked"); }
     }
   }
@@ -253,13 +325,17 @@
   }
   // drawing helpers
   const SRC = (m) => (m && m.__clip ? m.el : m); // a photo, or the <video> of a clip slice
+  function put(ctx, m, dx, dy, dw, dh) { // draw a photo, or only the real-footage part of a clip
+    if (m && m.__clip && m.crop) ctx.drawImage(m.el, m.crop.x, m.crop.y, m.crop.w, m.crop.h, dx, dy, dw, dh);
+    else ctx.drawImage(SRC(m), dx, dy, dw, dh);
+  }
   function cover(ctx, img, x, y, w, h, zoom = 1) {
     const s = Math.max(w / img.width, h / img.height) * zoom, iw = img.width * s, ih = img.height * s;
-    ctx.save(); ctx.beginPath(); ctx.rect(x, y, w, h); ctx.clip(); ctx.drawImage(SRC(img), x + (w - iw) / 2, y + (h - ih) / 2, iw, ih); ctx.restore();
+    ctx.save(); ctx.beginPath(); ctx.rect(x, y, w, h); ctx.clip(); put(ctx, img, x + (w - iw) / 2, y + (h - ih) / 2, iw, ih); ctx.restore();
   }
   function contain(ctx, img, cx, cy, maxW, maxH, zoom = 1) {
     const s = Math.min(maxW / img.width, maxH / img.height) * zoom, iw = img.width * s, ih = img.height * s;
-    ctx.drawImage(SRC(img), cx - iw / 2, cy - ih / 2, iw, ih);
+    put(ctx, img, cx - iw / 2, cy - ih / 2, iw, ih);
   }
   const ease = (x) => 1 - Math.pow(1 - clamp(x, 0, 1), 3);
   const pop = (x) => { x = clamp(x, 0, 1); const c1 = 1.70158, c3 = c1 + 1; return 1 + c3 * Math.pow(x - 1, 3) + c1 * Math.pow(x - 1, 2); };
@@ -332,7 +408,7 @@
         ctx.save(); ctx.translate(W * (0.3 + 0.4 * r[0]), H * (0.27 + 0.46 * r[1])); ctx.rotate((r[2] - 0.5) * 0.35); ctx.scale(kp, kp);
         ctx.fillStyle = "#fff"; const im = imgs[k % n], sc = Math.min(600 / im.width, 760 / im.height), iw = im.width * sc, ih = im.height * sc;
         ctx.shadowColor = "rgba(0,0,0,.5)"; ctx.shadowBlur = 30; ctx.fillRect(-iw / 2 - 14, -ih / 2 - 14, iw + 28, ih + 28); ctx.shadowBlur = 0;
-        ctx.drawImage(SRC(im), -iw / 2, -ih / 2, iw, ih); ctx.restore();
+        put(ctx, im, -iw / 2, -ih / 2, iw, ih); ctx.restore();
       }
     } else if (style === "bw2colour") {
       cover(ctx, img, 0, 0, W, H, 1.08 - 0.06 * p);
@@ -374,7 +450,7 @@
     const k = Math.round(iw) + "x" + Math.round(ih);
     if (!m[k]) {
       const pad = 40, c = new OffscreenCanvas(Math.ceil(iw) + pad * 2, Math.ceil(ih) + pad * 2), g = c.getContext("2d");
-      g.shadowColor = "rgba(0,0,0,.28)"; g.shadowBlur = 18; g.shadowOffsetY = 5; g.filter = WARM; g.drawImage(SRC(im), pad, pad, iw, ih); m[k] = c;
+      g.shadowColor = "rgba(0,0,0,.28)"; g.shadowBlur = 18; g.shadowOffsetY = 5; g.filter = WARM; put(g, im, pad, pad, iw, ih); m[k] = c;
     }
     return m[k];
   }
@@ -449,6 +525,8 @@
       if (L && L.faceFirst != null && Math.max(L.faceFirst, L.personFirst || 0) >= 0.5) { progress(0, "Finding a photo with a face to open on…"); if (await personFirst(imgs)) applied.push("opens on a person"); }
       progress(0, "Cutting video clips… (videos with clips take a bit longer)");
       const clips = await loadClips(await listFiles(), 6), nClips = placeClips(style, P, imgs, clips);
+      if (!clips.length && !["collage", "bwmood", "duo"].includes(style)) applied.push("no clips in niche.co/clips, so photos only");
+      if (clips.some((c) => c.cropped)) applied.push("cropped app buttons/borders out of " + clips.filter((c) => c.cropped).length + " clip" + (clips.filter((c) => c.cropped).length > 1 ? "s" : ""));
       if (nClips) applied.push(nClips + " video clip" + (nClips > 1 ? " slices" : " slice") + " from " + new Set(imgs.filter((m) => m && m.__clip).map((m) => m.name)).size + " clip" + (clips.length > 1 ? "s" : ""));
       const words = (opts.text != null ? opts.text : $("#vlText").value || "").trim();
       const text = words ? { text: words, from: clamp(L && L.textTime != null ? L.textTime : 0.2, 0, 1.5), to: 0, y: { top: 0.2, middle: 0.42, bottom: 0.74 }[(L && L.textPos) || "top"] } : null;
@@ -720,5 +798,5 @@
   }
   init();
   function stop() { if (!VL.busy) return false; VL.stop = true; return true; }
-  window.VideoLab = { init, stop, makeVideo, analyseNew, insights, voiceMake, voiceStudy, voiceLearn, _plan: plan, _analyseVideo: analyseVideo, _state: VL };
+  window.VideoLab = { init, stop, _scanClip: scanClip, makeVideo, analyseNew, insights, voiceMake, voiceStudy, voiceLearn, _plan: plan, _analyseVideo: analyseVideo, _state: VL };
 })();
