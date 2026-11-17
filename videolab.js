@@ -48,7 +48,8 @@
       await checkPerm(true);
       await VL.dir.getDirectoryHandle("videos", { create: true });
       await VL.dir.getDirectoryHandle("inspiration", { create: true });
-      msg("Connected to the " + VL.dir.name + " folder. I made a videos and an inspiration folder inside it.");
+      await VL.dir.getDirectoryHandle("clips", { create: true });
+      msg("Connected to the " + VL.dir.name + " folder. I made videos, inspiration and clips folders inside it.");
     } catch (e) { if (e.name !== "AbortError") msg("Couldn't open that folder: " + e.message); }
     render();
   }
@@ -135,6 +136,48 @@
     }
     return out;
   }
+  /* ---------- video clips: short slices cut on the beat ---------- */
+  async function loadClips(files, want) {
+    let pool = files.filter((f) => VID_RE.test(f.name) && /^clips\//i.test(f.path));
+    if (!pool.length) pool = files.filter((f) => VID_RE.test(f.name) && !/^(videos|inspiration)\//i.test(f.path) && !/^niche video \d+/i.test(f.name));
+    pool = pool.map((v) => [Math.random(), v]).sort((a, b) => a[0] - b[0]).map((x) => x[1]).slice(0, want);
+    const out = [];
+    for (const f of pool) {
+      const url = URL.createObjectURL(await f.h.getFile()), el = document.createElement("video");
+      el.muted = true; el.preload = "auto"; el.playsInline = true; el.src = url;
+      try {
+        await Promise.race([once(el, "loadedmetadata"), sleep(8000).then(() => { throw new Error("timeout"); })]);
+        if (!el.videoWidth || !(el.duration > 1)) throw new Error("unreadable");
+        el.currentTime = Math.min(0.5, el.duration / 2); await once(el, "seeked");
+        out.push({ __clip: true, el, url, name: f.name, width: el.videoWidth, height: el.videoHeight, dur: el.duration });
+      } catch (e) { URL.revokeObjectURL(url); }
+    }
+    return out;
+  }
+  function placeClips(style, P, imgs, clips) { // full-screen slots alternate photo / clip; vintage plays a clip behind each page
+    if (!clips.length || ["collage", "bwmood", "duo"].includes(style)) return 0;
+    const n = imgs.length, slots = style === "vintage" ? Array.from({ length: Math.ceil(P.shots.length / PAGE) }, (_, pg) => vIdx(pg, 0)) : P.shots.map((_, i) => i).filter((i) => i % 2 === 1);
+    let c = 0, used = 0;
+    for (const i of slots) {
+      if (i >= n) break;
+      const clip = clips[c++ % clips.length], need = style === "vintage" ? PAGE * P.shot : (P.shots[i] || { dur: P.shot }).dur;
+      imgs[i] = { ...clip, seg: clip.dur > need + 0.6 ? 0.3 + Math.random() * (clip.dur - need - 0.6) : 0 }; used++;
+    }
+    imgs.hasClips = used > 0; return used;
+  }
+  async function syncClips(style, P, imgs, t) { // move each visible clip to the right moment before the frame is drawn
+    if (!imgs.hasClips) return;
+    const n = imgs.length, si = P.shots.findIndex((s) => t >= s.start && t < s.start + s.dur); if (si < 0) return;
+    const jobs = [];
+    if (style === "vintage") { const pg = Math.floor(si / PAGE); jobs.push([imgs[vIdx(pg, 0) % n], P.shots[pg * PAGE].start]); }
+    else { jobs.push([imgs[si % n], P.shots[si].start]); if (si > 0 && t - P.shots[si].start < 0.25) jobs.push([imgs[(si - 1) % n], P.shots[si - 1].start]); }
+    for (const [m, st] of jobs) {
+      if (!m || !m.__clip) continue;
+      // clip motion updates 15 times a second (each frame held twice): half the decoding, same look in a fast edit
+      const len = Math.max(0.5, m.dur - m.seg - 0.05), local = m.seg + Math.floor(((t - st) % len) * 15) / 15;
+      if (Math.abs(m.el.currentTime - local) > 0.01) { m.el.currentTime = local; await once(m.el, "seeked"); }
+    }
+  }
   async function personFirst(imgs) { // move a photo with a face (or a person) to the front
     if (!window.VideoSense) return false;
     const tags = store.get("vlabTags", {});
@@ -209,13 +252,14 @@
     return { bpm, beat, shot, shots, end: t, total: t + 1.4, dropAt, bright, colour };
   }
   // drawing helpers
+  const SRC = (m) => (m && m.__clip ? m.el : m); // a photo, or the <video> of a clip slice
   function cover(ctx, img, x, y, w, h, zoom = 1) {
     const s = Math.max(w / img.width, h / img.height) * zoom, iw = img.width * s, ih = img.height * s;
-    ctx.save(); ctx.beginPath(); ctx.rect(x, y, w, h); ctx.clip(); ctx.drawImage(img, x + (w - iw) / 2, y + (h - ih) / 2, iw, ih); ctx.restore();
+    ctx.save(); ctx.beginPath(); ctx.rect(x, y, w, h); ctx.clip(); ctx.drawImage(SRC(img), x + (w - iw) / 2, y + (h - ih) / 2, iw, ih); ctx.restore();
   }
   function contain(ctx, img, cx, cy, maxW, maxH, zoom = 1) {
     const s = Math.min(maxW / img.width, maxH / img.height) * zoom, iw = img.width * s, ih = img.height * s;
-    ctx.drawImage(img, cx - iw / 2, cy - ih / 2, iw, ih);
+    ctx.drawImage(SRC(img), cx - iw / 2, cy - ih / 2, iw, ih);
   }
   const ease = (x) => 1 - Math.pow(1 - clamp(x, 0, 1), 3);
   const pop = (x) => { x = clamp(x, 0, 1); const c1 = 1.70158, c3 = c1 + 1; return 1 + c3 * Math.pow(x - 1, 3) + c1 * Math.pow(x - 1, 2); };
@@ -262,8 +306,9 @@
     if (style === "vintage") { vintage(ctx, P, imgs, si, p, rnd); return; }
     if (style === "bwfull") { // full-screen moodboard edit: one photo at a time, strong B&W, grain and vignette
       const col = P.colour && P.colour.has(si), b = P.bright || 1;
-      ctx.filter = col ? `contrast(1.08) saturate(0.9) brightness(${b})` : `grayscale(1) contrast(1.35) brightness(${b})`;
-      cover(ctx, img, 0, 0, W, H, 1.08 - 0.08 * ease(p)); ctx.filter = "none";
+      const f = col ? `contrast(1.08) saturate(0.9) brightness(${b})` : `grayscale(1) contrast(1.35) brightness(${b})`;
+      if (img.__clip) { ctx.filter = f; cover(ctx, img, 0, 0, W, H, 1.08 - 0.08 * ease(p)); ctx.filter = "none"; }
+      else cover(ctx, filtered(img, f), 0, 0, W, H, 1.08 - 0.08 * ease(p)); // photo graded once, not every frame
       filmLook(ctx, si * 7 + Math.floor(p * 12));
     } else if (style === "hardcut") {
       ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, W, H);
@@ -287,7 +332,7 @@
         ctx.save(); ctx.translate(W * (0.3 + 0.4 * r[0]), H * (0.27 + 0.46 * r[1])); ctx.rotate((r[2] - 0.5) * 0.35); ctx.scale(kp, kp);
         ctx.fillStyle = "#fff"; const im = imgs[k % n], sc = Math.min(600 / im.width, 760 / im.height), iw = im.width * sc, ih = im.height * sc;
         ctx.shadowColor = "rgba(0,0,0,.5)"; ctx.shadowBlur = 30; ctx.fillRect(-iw / 2 - 14, -ih / 2 - 14, iw + 28, ih + 28); ctx.shadowBlur = 0;
-        ctx.drawImage(im, -iw / 2, -ih / 2, iw, ih); ctx.restore();
+        ctx.drawImage(SRC(im), -iw / 2, -ih / 2, iw, ih); ctx.restore();
       }
     } else if (style === "bw2colour") {
       cover(ctx, img, 0, 0, W, H, 1.08 - 0.06 * p);
@@ -311,34 +356,63 @@
     const order = slots.map((s, i) => [rnd[(page * 5 + i) % rnd.length][0], s]).sort((a, b) => a[0] - b[0]).map((x) => x[1]);
     return (layout.cache[page] = order.map(([c, r], i) => { const q = rnd[(page * 7 + i * 3) % rnd.length]; return { cx: W * (0.28 + c * 0.44 + (q[0] - 0.5) * 0.12), cy: H * (0.16 + r * 0.3 + (q[1] - 0.5) * 0.08), w: W * (0.38 + q[2] * 0.12) }; }));
   }
+  // Prepared once per photo: colour-graded copies and photo "cards" with their shadow, so each frame is cheap.
+  const prep = { graded: new Map(), cards: new Map(), pile: null };
+  function filtered(im, f) { // a photo with a canvas filter applied once and kept
+    let m = prep.graded.get(im); if (!m) prep.graded.set(im, (m = {}));
+    if (!m[f]) { const c = new OffscreenCanvas(im.width, im.height), g = c.getContext("2d"); g.filter = f; g.drawImage(im, 0, 0); m[f] = c; }
+    return m[f];
+  }
+  function gradedCopy(im, extra) {
+    if (im.__clip) return null; // clips are graded live
+    const key = im; let m = prep.graded.get(key); if (!m) prep.graded.set(key, (m = {}));
+    if (!m[extra]) { const c = new OffscreenCanvas(im.width, im.height), g = c.getContext("2d"); g.filter = WARM + extra; g.drawImage(im, 0, 0); m[extra] = c; }
+    return m[extra];
+  }
+  function card(im, iw, ih) { // graded photo with a soft shadow, at the size it's shown
+    const key = im; let m = prep.cards.get(key); if (!m) prep.cards.set(key, (m = {}));
+    const k = Math.round(iw) + "x" + Math.round(ih);
+    if (!m[k]) {
+      const pad = 40, c = new OffscreenCanvas(Math.ceil(iw) + pad * 2, Math.ceil(ih) + pad * 2), g = c.getContext("2d");
+      g.shadowColor = "rgba(0,0,0,.28)"; g.shadowBlur = 18; g.shadowOffsetY = 5; g.filter = WARM; g.drawImage(SRC(im), pad, pad, iw, ih); m[k] = c;
+    }
+    return m[k];
+  }
   function vintage(ctx, P, imgs, si, p, rnd) {
-    const n = imgs.length, page = Math.floor(si / PAGE), first = page * PAGE, img = (i) => imgs[i % n];
-    if (page % 2 === 0) { // full-screen vintage photo behind
-      ctx.filter = WARM + " brightness(0.9)"; cover(ctx, img(vIdx(page, 0)), 0, 0, W, H, 1.06 - 0.04 * Math.min(1, (si - first + p) / PAGE)); ctx.filter = "none";
+    const n = imgs.length, page = Math.floor(si / PAGE), first = page * PAGE, img = (i) => imgs[i % n], bg = img(vIdx(page, 0));
+    if (page % 2 === 0) { // full-screen vintage photo (or clip) behind
+      const z = 1.06 - 0.04 * Math.min(1, (si - first + p) / PAGE), gc = gradedCopy(bg, " brightness(0.9)");
+      if (gc) { gc.__w = bg.width; cover(ctx, gc, 0, 0, W, H, z); } else { ctx.filter = WARM + " brightness(0.9)"; cover(ctx, bg, 0, 0, W, H, z); ctx.filter = "none"; }
     } else { // cream paper with one big photo bleeding off the corner
       ctx.fillStyle = "#d9d0b6"; ctx.fillRect(0, 0, W, H);
-      ctx.filter = WARM; cover(ctx, img(vIdx(page, 0)), W * 0.38, H * 0.5, W * 0.7, H * 0.55, 1.05); ctx.filter = "none";
+      const gc = gradedCopy(bg, "");
+      if (gc) cover(ctx, gc, W * 0.38, H * 0.5, W * 0.7, H * 0.55, 1.05); else { ctx.filter = WARM; cover(ctx, bg, W * 0.38, H * 0.5, W * 0.7, H * 0.55, 1.05); ctx.filter = "none"; }
     }
-    const L = layout(page, rnd);
-    for (let k = first; k <= si; k++) {
+    const L = layout(page, rnd), place = (k) => {
       const s = L[(k - first) % L.length], im = img(vIdx(page, 1 + k - first));
       const sc = Math.min(s.w / im.width, (H * 0.3) / im.height), iw = im.width * sc, ih = im.height * sc;
-      const kp = k === si ? ease(p * 5) : 1, z = 0.9 + 0.1 * kp;
-      ctx.save(); ctx.globalAlpha = Math.min(1, kp * 1.6); ctx.translate(s.cx, s.cy); ctx.scale(z, z);
-      ctx.shadowColor = "rgba(0,0,0,.28)"; ctx.shadowBlur = 18; ctx.shadowOffsetY = 5; ctx.filter = WARM;
-      ctx.drawImage(im, -iw / 2, -ih / 2, iw, ih); ctx.restore();
+      return { s, c: card(im, iw, ih), iw, ih };
+    };
+    // the photos that have already landed don't move: keep them as one ready-made layer
+    if (!prep.pile || prep.pile.page !== page || prep.pile.upto !== si - 1) {
+      const c = new OffscreenCanvas(W, H), g = c.getContext("2d");
+      for (let k = first; k < si; k++) { const q = place(k); g.drawImage(q.c, q.s.cx - q.c.width / 2, q.s.cy - q.c.height / 2); }
+      prep.pile = { page, upto: si - 1, c };
     }
-    ctx.filter = "none"; filmLook(ctx, si * 5 + Math.floor(p * 10), 0.25);
+    ctx.drawImage(prep.pile.c, 0, 0);
+    const q = place(si), kp = ease(p * 5), z = 0.9 + 0.1 * kp; // the newest photo pops in
+    ctx.save(); ctx.globalAlpha = Math.min(1, kp * 1.6); ctx.translate(q.s.cx, q.s.cy); ctx.scale(z, z); ctx.drawImage(q.c, -q.c.width / 2, -q.c.height / 2); ctx.restore();
+    filmLook(ctx, si * 5 + Math.floor(p * 10), 0.25);
   }
   let grainTile = null, vignette = null;
   function filmLook(ctx, seed, edge = 1) { // film grain + soft dark edges, like moodboard edits
-    if (!grainTile) {
+    if (!grainTile) { // see-through specks of light and dark: cheap to lay over every frame
       grainTile = new OffscreenCanvas(360, 640); const g = grainTile.getContext("2d"), d = g.createImageData(360, 640);
-      for (let i = 0; i < d.data.length; i += 4) { const v = Math.random() * 255; d.data[i] = d.data[i + 1] = d.data[i + 2] = v; d.data[i + 3] = 255; }
+      for (let i = 0; i < d.data.length; i += 4) { const v = Math.random() < 0.5 ? 0 : 255; d.data[i] = d.data[i + 1] = d.data[i + 2] = v; d.data[i + 3] = Math.random() * 60; }
       g.putImageData(d, 0, 0);
       vignette = ctx.createRadialGradient(W / 2, H / 2, H * 0.32, W / 2, H / 2, H * 0.72); vignette.addColorStop(0, "rgba(0,0,0,0)"); vignette.addColorStop(1, "rgba(0,0,0,.55)");
     }
-    ctx.save(); ctx.globalAlpha = 0.07; ctx.globalCompositeOperation = "overlay";
+    ctx.save(); ctx.globalAlpha = 0.45;
     const ox = (seed * 97) % 180, oy = (seed * 61) % 320; ctx.drawImage(grainTile, -ox, -oy, W + 360, H + 640); ctx.restore();
     ctx.save(); ctx.globalAlpha = edge; ctx.fillStyle = vignette; ctx.fillRect(0, 0, W, H); ctx.restore();
   }
@@ -373,6 +447,9 @@
       const imgs = await loadImages(await listFiles(), style === "duo" ? P.shots.length * 2 : style === "vintage" ? P.shots.length + Math.ceil(P.shots.length / PAGE) : P.shots.length);
       if (!imgs.length) return { error: "I couldn't find any photos in the niche.co folder. Add some product photos to it." };
       if (L && L.faceFirst != null && Math.max(L.faceFirst, L.personFirst || 0) >= 0.5) { progress(0, "Finding a photo with a face to open on…"); if (await personFirst(imgs)) applied.push("opens on a person"); }
+      progress(0, "Cutting video clips… (videos with clips take a bit longer)");
+      const clips = await loadClips(await listFiles(), 6), nClips = placeClips(style, P, imgs, clips);
+      if (nClips) applied.push(nClips + " video clip" + (nClips > 1 ? " slices" : " slice") + " from " + new Set(imgs.filter((m) => m && m.__clip).map((m) => m.name)).size + " clip" + (clips.length > 1 ? "s" : ""));
       const words = (opts.text != null ? opts.text : $("#vlText").value || "").trim();
       const text = words ? { text: words, from: clamp(L && L.textTime != null ? L.textTime : 0.2, 0, 1.5), to: 0, y: { top: 0.2, middle: 0.42, bottom: 0.74 }[(L && L.textPos) || "top"] } : null;
       if (text && style === "vintage") { text.plain = true; text.beat = P.beat; text.y = L && L.textPos === "top" ? 0.2 : L && L.textPos === "middle" ? 0.45 : 0.86; }
@@ -388,7 +465,8 @@
       const frames = Math.round(P.total * FPS);
       for (let i = 0; i < frames; i++) {
         if (encErr) throw encErr;
-        if (VL.stop) { try { enc.close(); } catch (e) {} imgs.forEach((b) => b.close && b.close()); return { error: "Stopped. No video was saved." }; }
+        if (VL.stop) { try { enc.close(); } catch (e) {} imgs.forEach((b) => b.close && b.close()); clips.forEach((c) => URL.revokeObjectURL(c.url)); return { error: "Stopped. No video was saved." }; }
+        await syncClips(style, P, imgs, i / FPS);
         drawFrame(ctx, style, P, imgs, i / FPS, rnd, text);
         const vf = new VideoFrame(cv, { timestamp: Math.round((i * 1e6) / FPS), duration: Math.round(1e6 / FPS) });
         enc.encode(vf, { keyFrame: i % (FPS * 2) === 0 }); vf.close();
@@ -396,11 +474,12 @@
         if (i % 6 === 0) { progress(i / frames, "Rendering " + STYLES[style].toLowerCase() + "…"); await sleep(0); }
       }
       await enc.flush(); enc.close(); muxer.finalize(); imgs.forEach((b) => b.close && b.close());
+      clips.forEach((c) => { c.el.removeAttribute("src"); c.el.load(); URL.revokeObjectURL(c.url); });
       const blob = new Blob([target.buffer], { type: "video/mp4" });
       const videos = await VL.dir.getDirectoryHandle("videos", { create: true });
       const name = await nextName(videos);
       const fh = await videos.getFileHandle(name, { create: true }), w = await fh.createWritable(); await w.write(blob); await w.close();
-      store.set("vlabLastStyle", style); layout.cache = {};
+      store.set("vlabLastStyle", style); layout.cache = {}; prep.graded.clear(); prep.cards.clear(); prep.pile = null;
       const made = store.get("vlabMade", {}); made[name] = { style, rating: null }; store.set("vlabMade", made);
       VL.last = { name, url: URL.createObjectURL(blob), style, secs: P.total, bpm: P.bpm, shot: P.shot, learned: !!L, applied, textTip: !text && L && L.textShare >= 0.5 ? (L.hooks[0] || "") : null };
       progress(1, "Saved " + name);
