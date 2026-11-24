@@ -1,10 +1,10 @@
 {
-  "updated": "2026-11-23T05:13:00+02:00",
-  "from": "2026-11-16",
-  "to": "2026-11-22",
+  "updated": "2026-11-24T05:13:00+02:00",
+  "from": "2026-11-17",
+  "to": "2026-11-23",
   "source": "Metricool",
-  "tiktok": { "handle": "niche.co", "followers": 41, "newFollowers": -3, "totalLikes": 411, "likesGained": 157, "views": 0,
-    "prev": { "followers": 44, "newFollowers": 44, "totalLikes": 254, "likesGained": 254, "views": null } },
-  "instagram": { "handle": "nicheco.offcial", "followers": 2, "newFollowers": 0, "views": 712, "reach": 537,
-    "prev": { "followers": 1, "newFollowers": 0, "views": 290, "reach": 243 } }
+  "tiktok": { "handle": "niche.co", "followers": 36, "newFollowers": -20, "totalLikes": 412, "likesGained": 97, "views": 0,
+    "prev": { "followers": 56, "newFollowers": 56, "totalLikes": 315, "likesGained": 315, "views": null } },
+  "instagram": { "handle": "nicheco.offcial", "followers": 2, "newFollowers": 0, "views": 489, "reach": 406,
+    "prev": { "followers": 3, "newFollowers": 0, "views": 635, "reach": 486 } }
 }
